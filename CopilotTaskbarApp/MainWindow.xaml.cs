@@ -18,11 +18,9 @@ public sealed partial class MainWindow : Window
     private readonly CopilotService _copilotService;
     private readonly ContextService _contextService;
     private readonly PersistenceService _persistenceService;
-    private readonly ScreenshotService _screenshotService;
     private WinForms.NotifyIcon? _notifyIcon;
     
     // Avatar images
-    private string? _userAvatarPath;
     private string? _userDisplayName;
     private string _copilotAvatarPath = "Assets/copilot-logo.png";
 
@@ -30,7 +28,6 @@ public sealed partial class MainWindow : Window
     private readonly List<string> _commandHistory = new();
     private int _historyIndex = -1;
     private string _currentInput = "";
-    private string? _pendingScreenshotBase64;
     
     private Microsoft.UI.Windowing.AppWindow _appWindow;
     private bool _isExiting = false;
@@ -57,7 +54,6 @@ public sealed partial class MainWindow : Window
         _copilotService = new CopilotService();
         _contextService = new ContextService();
         _persistenceService = new PersistenceService();
-        _screenshotService = new ScreenshotService();
         
         // Clear old history on startup
         _messages.Clear();
@@ -95,8 +91,8 @@ public sealed partial class MainWindow : Window
         if (_appWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true, false);
-            presenter.IsResizable = false;
-            presenter.IsMaximizable = false;
+            presenter.IsResizable = true;
+            presenter.IsMaximizable = true;
         }
         
         // Load icon from assets - try copilot-icon.ico first, fallback to github-mark.ico
@@ -203,11 +199,11 @@ public sealed partial class MainWindow : Window
         
         // TitleBar customization handled in Constructor/XAML now
         
-        // Hide min/max buttons
+        // Hide min/max buttons (using custom minimize button)
         var presenter = appWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
         if (presenter != null)
         {
-            presenter.IsMaximizable = false;
+            presenter.IsMaximizable = true;
             presenter.IsMinimizable = false;
         }
         
@@ -616,57 +612,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ScreenshotButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            // Temporarily hide window to take screenshot
-            HideMainWindow();
-            
-            // Short delay to ensure window is hidden
-            Task.Delay(300).ContinueWith(_ =>
-            {
-                var base64 = _screenshotService.CaptureScreenBase64();
-                
-                DispatcherQueue.TryEnqueue(() => 
-                {
-                    ShowMainWindow(); // Restore window
-                    
-                    if (!string.IsNullOrEmpty(base64))
-                    {
-                        _pendingScreenshotBase64 = base64;
-                        InputBox.PlaceholderText = "Screenshot attached! Type your question...";
-                        
-                        // Add system message to confirm attachment
-                        var sysMsg = new ChatMessage
-                        {
-                            Role = "system",
-                            Content = "📸 Screenshot captured and attached to next message.",
-                            Timestamp = DateTime.Now
-                        };
-                        _messages.Add(sysMsg);
-                        ScrollToBottom();
-                    }
-                    else
-                    {
-                        var errMsg = new ChatMessage
-                        {
-                            Role = "system",
-                            Content = "⚠️ Failed to capture screenshot.",
-                            Timestamp = DateTime.Now
-                        };
-                        _messages.Add(errMsg);
-                    }
-                });
-            });
-        }
-        catch (Exception ex)
-        {
-             System.Diagnostics.Debug.WriteLine($"Error capturing screenshot: {ex.Message}");
-             ShowMainWindow();
-        }
-    }
-
     private async void SendButton_Click(object sender, RoutedEventArgs e)
     {
         System.Diagnostics.Debug.WriteLine("[SendButton_Click] Button clicked!");
@@ -696,54 +641,60 @@ public sealed partial class MainWindow : Window
             _currentInput = "";
 
             InputBox.Text = string.Empty;
-            SendButton.IsEnabled = false;
-            
-            // Capture pending screenshot if any
-            string? attachedImage = _pendingScreenshotBase64;
-            _pendingScreenshotBase64 = null; // Clear after using
-            InputBox.PlaceholderText = "Ask GitHub Copilot..."; // Reset placeholder
 
-            // Optimistic UI Update: Show user message IMMEDIATELY before fetching context
-            // This improves perceived responsiveness significantly
+            // Optimistic UI update
             var userMessage = new ChatMessage
             {
                 Role = "user",
-                Content = input + (attachedImage != null ? " [Screenshot Attached]" : ""),
+                Content = input,
                 Timestamp = DateTime.Now,
-                Context = null, // Will be filled in background if needed, or we just trust the service to have it
-                AvatarImagePath = null, // No image for user
+                Context = null,
+                AvatarImagePath = null,
                 UserName = _userDisplayName
             };
             _messages.Add(userMessage);
             await _persistenceService.SaveMessageAsync(userMessage);
 
-            // Scroll to bottom immediately
+            // Add a placeholder "thinking" message
+            var thinkingMessage = new ChatMessage
+            {
+                Role = "assistant",
+                Content = "Thinking...",
+                Timestamp = DateTime.Now,
+                AvatarImagePath = _copilotAvatarPath
+            };
+            _messages.Add(thinkingMessage);
+
             DispatcherQueue.TryEnqueue(() => 
             {
                  ScrollToBottom();
             });
             
-            // Now fetch context in background
-            // This prevents the UI from freezing while we scan the file system/process list
-            var currentContext = await _contextService.GetContextAsync();
-            userMessage.Context = currentContext; // Update model with actual context
-            // Note: We don't need to re-save the user message just for context unless strict auditing is required
+            // Re-enable input immediately so user can queue another message or continue working
+            SendButton.IsEnabled = true;
+            
+            var (currentContext, screenshot) = await _contextService.GetContextAsync();
+            userMessage.Context = currentContext;
 
             System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Starting request. Message count: {_messages.Count}");
 
             try
             {
-                // Get response from Copilot with timeout
-                var responseTask = _copilotService.GetResponseAsync(input, currentContext, attachedImage);
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(60));
+                // Get recent messages for conversation context (excluding the thinking message we just added)
+                var recentMessages = _messages.Count > 2 
+                    ? _messages.Take(_messages.Count - 2).ToList() 
+                    : null;
+                
+                var responseTask = _copilotService.GetResponseAsync(input, currentContext, screenshot, recentMessages);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(300));
                 
                 var completedTask = await Task.WhenAny(responseTask, timeoutTask);
                 
                 string response;
                 if (completedTask == timeoutTask)
                 {
-                    System.Diagnostics.Debug.WriteLine("[SendMessageAsync] Request timed out after 60 seconds");
-                    response = "Request timed out after 60 seconds. The Copilot service may be unavailable or slow to respond.";
+                    System.Diagnostics.Debug.WriteLine("[SendMessageAsync] UI timeout after 300 seconds");
+                    response = "Request timed out after 5 minutes. For complex multi-step operations, try breaking them into separate requests.";
                 }
                 else
                 {
@@ -751,38 +702,32 @@ public sealed partial class MainWindow : Window
                     System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Got response: {response?.Substring(0, Math.Min(50, response?.Length ?? 0))}...");
                 }
 
-                var assistantMessage = new ChatMessage
-                {
-                    Role = "assistant", // Always assistant, even for timeout
-                    Content = response,
-                    Timestamp = DateTime.Now,
-                    Context = currentContext,
-                    AvatarImagePath = _copilotAvatarPath
-                };
-                
-                // Ensure UI update happens on UI thread
+                // Update the thinking message instead of adding a new one
                 DispatcherQueue.TryEnqueue(() => 
                 {
-                    _messages.Add(assistantMessage);
-                    _persistenceService.SaveMessageAsync(assistantMessage); 
+                    thinkingMessage.Content = response;
+                    thinkingMessage.Timestamp = DateTime.Now;
+                    _persistenceService.SaveMessageAsync(thinkingMessage); 
                     
-                    // Smoothly scroll to the new message
+                    // Smoothly scroll to the updated message
                     ScrollToBottom();
                 });
             }
             catch (Exception ex)
             {
-                var errorMessage = new ChatMessage
+                System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Exception: {ex.Message}");
+                // Update the thinking message with error
+                DispatcherQueue.TryEnqueue(() => 
                 {
-                    Role = "system",
-                    Content = $"Error: {ex.Message}",
-                    Timestamp = DateTime.Now
-                };
-                _messages.Add(errorMessage);
+                    thinkingMessage.Role = "system";
+                    thinkingMessage.Content = $"Error: {ex.Message}";
+                    thinkingMessage.Timestamp = DateTime.Now;
+                    ScrollToBottom();
+                });
             }
             finally
             {
-                SendButton.IsEnabled = true;
+                // Focus input for next query
                 InputBox.Focus(FocusState.Programmatic);
                 
                 // Scroll to bottom

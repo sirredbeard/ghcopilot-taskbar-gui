@@ -1,266 +1,311 @@
 # GitHub Copilot Taskbar GUI
 
-> **⚠️ CONCEPTUAL WORK IN PROGRESS**
-> This application is an experimental proof-of-concept demonstrating deep OS integration with GitHub Copilot. Features, APIs, and UI are subject to change.
+> **Work in Progress**: Experimental proof-of-concept for deep OS integration with GitHub Copilot. APIs and features subject to change.
 
-A modern WinUI 3 desktop application that provides a beautiful chat interface to GitHub Copilot CLI, accessible from your Windows taskbar. It goes beyond simple chat by understanding your **active desktop context**—open apps, folders, and services—to provide highly relevant AI assistance.
+.NET 10 WinUI 3 desktop application providing system tray access to GitHub Copilot CLI with automatic context awareness. Detects active focus, open applications, file system state, and running services to augment prompts with relevant environment information.
 
 ## Features
 
-- **System Tray Integration**: Access GitHub Copilot from a taskbar icon with the GitHub logo
-- **Modern WinUI 3 Interface**: Native Windows 11 Fluent Design with Mica backdrop
-- **Deep Context Awareness**:
-  - Automatically detects **active focus** and **open Explorer folders**
-  - Scans **open applications** and **background services** (e.g., Docker, Python)
-  - Detects installed **WSL Distributions**
-- **Vision Capabilities**: Take and attach screenshots of your desktop directly to the chat
-- **Chat Persistence**: Saves your chat history using SQLite
-- **GitHub Copilot CLI Integration**: Leverages `gh copilot` extension for AI assistance
+- **System Tray Integration**: Windows notification area icon for quick access
+- **WinUI 3 Interface**: Native Windows UI with Fluent Design and Mica/DesktopAcrylic backdrop
+- **Automatic Context Detection**:
+  - Active window focus (Explorer paths, Terminal with WSL distribution detection, IDEs)
+  - Open applications and visible windows
+  - Background services (Docker, databases, language servers)
+  - WSL distributions with smart Unix prompt detection
+  - Environment variables (PYTHONPATH, NODE_ENV, DOTNET_ROOT, filtered PATH, etc.)
+  - Screenshot capture when context ambiguous (LLM vision only when needed)
+- **Conversation History**: Last 10 messages included for context continuity
+- **Context Optimization**: Tiered detection (10-500ms) prioritizes fast operations
+- **Fallback Mechanisms**: Windows Accessibility API when Win32 insufficient
+- **Smart Command Execution**: Imperative commands executed immediately with partial progress reporting
+- **"Thinking..." Indicator**: Visual feedback while processing requests
+- **Chat Persistence**: SQLite storage for message history
+- **GitHub Copilot SDK**: Direct integration with Copilot CLI (v0.1.20, 5-minute timeout for complex operations)
 
 ## Prerequisites
 
-- **Windows 10** version 1809 or later (Windows 11 recommended for full features)
-- **.NET 10 SDK**
-- **GitHub account** with Copilot access
+- Windows 10 1809+ (Windows 11 recommended)
+- .NET 10 SDK
+- GitHub Copilot subscription
+- GitHub Copilot CLI
 
-### Installing GitHub Copilot CLI
+### Installing Copilot CLI
 
-The GitHub Copilot SDK requires the Copilot CLI to be installed separately.
+The SDK requires separate CLI installation:
 
-**Easy Install (Recommended):**
-
-The app will detect if Copilot CLI is not installed and offer to install it automatically via winget
-
-**Manual Installation:**
-
-**Option 1: Via winget (Recommended)**
 ```powershell
+# Via winget (recommended)
 winget install --id GitHub.Copilot
-```
 
-**Option 2: Via GitHub CLI Extension**
-```powershell
-# If you have GitHub CLI (gh) installed:
+# Via GitHub CLI extension
 gh extension install github/gh-copilot
-```
 
-**Option 3: Direct Download**
-https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line
-
-### Verify Installation
-
-```powershell
+# Verify
 copilot --version
 ```
 
-### Authentication
-
-After installing the CLI, authenticate with GitHub:
-
-**If using standalone Copilot CLI:**
+Authentication:
 ```powershell
-copilot auth login
+copilot auth login  # or: gh auth login
 ```
 
-**If using GitHub CLI with Copilot extension:**
+## Build
+
 ```powershell
-gh auth login
+git clone https://github.com/sirredbeard/ghcopilot-taskbar-gui
+cd ghcopilot-taskbar-gui\CopilotTaskbarApp
+dotnet restore
+dotnet build --configuration Release
+dotnet run
 ```
-
-Follow the prompts to authenticate via web browser.
-
-## Installation
-
-### Build from Source
-
-1. Clone the repository:
-   ```powershell
-   git clone <repository-url>
-   cd ghcopilot-taskbar-gui\CopilotTaskbarApp
-   ```
-
-2. Restore dependencies:
-   ```powershell
-   dotnet restore
-   ```
-
-3. Build the application:
-   ```powershell
-   dotnet build --configuration Release
-   ```
-
-4. Run the application:
-   ```powershell
-   dotnet run
-   ```
 
 ## Usage
 
-1. **Launch the app**: Run `CopilotTaskbarApp.exe` from the build output
-2. **First Run - Automatic Setup**:
-   - App detects if Copilot CLI is installed
-   - If not found, offers one-click installation via winget
-   - Guides you through authentication if needed
-3. **System Tray Icon**: Look for the GitHub logo in your system tray
-4. **Start Chatting**: Click the icon to open the chat window
-5. **Context Detection**: The app automatically detects your active Explorer folder
-6. **Ask Questions**: Type your questions and get AI-powered responses
+Run `CopilotTaskbarApp.exe`. Application icon appears in system tray. Click to open chat interface.
 
-### First-Time Experience
+**First Run**:
+1. CLI detection runs automatically
+2. If missing, offers winget installation
+3. Authentication prompts if needed
 
-The app makes setup easy:
+**Context Gathering**:
+- Automatic on every query
+- Tier 1 (10-50ms): Active window detection via Win32 Z-order, WSL Unix prompt detection
+- Tier 2 (100-200ms): File explorer, applications, environment variables, screenshot (only if context ambiguous)
+- Tier 3 (500ms+): WSL distributions list, background services (developer scenarios only)
+- Screenshot skipped when strong text context exists (faster responses)
+- Environment variables collected: PATH (filtered), PYTHONPATH, NODE_ENV, JAVA_HOME, DOTNET_ROOT, etc.
+- Conversation history: Last 10 messages included for contextual awareness
 
-1. **CLI Detection**: Automatically checks for Copilot CLI
-2. **One-Click Install**: If winget is available, install with one click
-3. **Authentication**: Follow prompts to authenticate with GitHub
-4. **Ready to Chat**: Start asking questions immediately
+**Smart Features**:
+- **Context Continuity**: Remembers previous actions ("install podman" → "uninstall it" works)
+- **WSL Distribution Detection**: Recognizes "user@hostname:~" patterns, checks running distros
+- **Actionable Commands**: Executes imperative commands immediately (install, start, configure)
+- **Partial Progress**: Reports what succeeded even if later steps fail
+- **"Thinking..." Indicator**: Shows real-time feedback during long operations
+
+**Keyboard Shortcuts**:
+- `Enter`: Send message
+- `Shift+Enter`: New line
+- `Up/Down`: Command history
 
 ## Architecture
 
 ### Components
 
-- **MainWindow**: WinUI 3 window with chat UI and system tray integration
-- **CopilotService**: Wrapper for GitHub Copilot CLI (`gh copilot`)
-- **ContextService**: Detects active Windows Explorer folder using Shell COM APIs
-- **PersistenceService**: SQLite-based chat history storage
+- **MainWindow**: WinUI 3 UI with system tray integration (System.Windows.Forms.NotifyIcon)
+- **CopilotService**: GitHub Copilot SDK client wrapper with pattern matching for type safety
+- **ContextService**: Multi-tiered context detection (Win32, Shell COM, UI Automation)
+- **ScreenshotService**: Automatic screen capture (Base64 JPEG, 1024px max)
+- **PersistenceService**: SQLite message storage
 
 ### Technologies
 
-- **.NET 10**: Latest .NET platform
-- **WinUI 3**: Modern Windows UI framework with Fluent Design
-- **GitHub Copilot SDK**: Official .NET SDK for GitHub Copilot (v0.1.20)
-- **H.NotifyIcon.WinUI**: System tray icon support for WinUI 3
-- **SQLite**: Local database for chat persistence
-- **GitHub Copilot CLI**: Backend AI service
+- .NET 10 (self-contained deployment required for unpackaged WinUI 3)
+- WinUI 3 with Windows App SDK
+- GitHub Copilot SDK v0.1.20 (JSON-RPC over stdio)
+- System.Windows.Forms.NotifyIcon (official Microsoft API)
+- Windows Accessibility API (UI Automation fallback)
+- SQLite for persistence
 
 ## Project Structure
 
 ```
 CopilotTaskbarApp/
-├── App.xaml              # Application definition
-├── App.xaml.cs           # Application entry point
-├── MainWindow.xaml       # Main UI layout
-├── MainWindow.xaml.cs    # Main window logic
-├── ChatMessage.cs        # Message data model
-├── CopilotService.cs     # GitHub Copilot CLI wrapper
-├── ContextService.cs     # Explorer folder detection
-├── PersistenceService.cs # SQLite chat storage
-├── Assets/
-│   └── github-mark.png   # GitHub logo for tray icon
-└── CopilotTaskbarApp.csproj
+├── App.xaml.cs              # Entry point
+├── MainWindow.xaml.cs       # UI and tray integration
+├── CopilotService.cs        # SDK client wrapper
+├── ContextService.cs        # Tiered context detection
+├── ScreenshotService.cs     # Screen capture
+├── PersistenceService.cs    # SQLite storage
+├── CopilotCliDetector.cs    # CLI installation checks
+├── ChatMessage.cs           # Data model
+└── Assets/                  # Icons
 ```
 
-## Configuration
-
-The app stores data in: `%LOCALAPPDATA%\CopilotTaskbarApp\`
-- `chat.db`: SQLite database with chat history
-
-## Keyboard Shortcuts
-
-- **Enter**: Send message
-- **Shift+Enter**: New line in message input
+**Data Directory**: `%LOCALAPPDATA%\CopilotTaskbarApp\chat.db`
 
 ## Troubleshooting
 
-### "GitHub Copilot CLI not found"
-
-The Copilot CLI must be installed separately:
-
+**CLI not found**:
 ```powershell
-# Via GitHub CLI (recommended)
-gh extension install github/gh-copilot
-
-# Verify it's in PATH
-gh copilot --version
+winget install --id GitHub.Copilot
+copilot --version
 ```
 
-If using standalone CLI, ensure it's added to your system PATH.
-
-### "Not authenticated with GitHub"
-
-Authenticate with GitHub:
-
+**Authentication errors**:
 ```powershell
-gh auth login
+copilot auth login  # or: gh auth login
+copilot --version   # verify
 ```
 
-Verify authentication:
-```powershell
-gh auth status
+**Subscription errors**: Verify GitHub Copilot access on your account.
+
+**SDK Notes**:
+- SDK communicates via JSON-RPC over stdio
+- Starts CLI process automatically in server mode
+- Does not bundle or install CLI
+- Request timeout: 300 seconds (5 minutes) for complex multi-step operations
+
+**Connection issues**:
+1. Check CLI: `copilot --version`
+2. Test directly: `copilot chat "test"`
+3. Restart application
+
+**Timeout issues**: For complex multi-step commands, try breaking into separate requests. Check debug logs (see Debugging section).
+
+## Debugging
+
+### Viewing CopilotService Debug Output
+
+Detailed diagnostics are available in VS Code Debug Console:
+
+**Setup**:
+1. Open project in VS Code
+2. Press **F5** to start debugging (or Run → Start Debugging)
+3. Debug Console opens automatically showing all output
+
+**What You'll See**:
+```
+[CopilotService] ===== GetResponseAsync START at 14:23:45.123 =====
+[CopilotService] CLI already started, reusing connection
+[CopilotService] Stage 1 (CLI Start): 0.05s
+[CopilotService] Stage 2 (Session Create): 0.12s
+[CopilotService] ===== FULL PROMPT (2345 chars) =====
+[CopilotService] You are a desktop assistant...
+[CopilotService] <full prompt with context>
+[CopilotService] ===== END PROMPT =====
+[CopilotService] Stage 3 (Sending to model): Starting at 14:23:45.300...
+[CopilotService] Stage 3 (Model Response): 18.42s
+[CopilotService] Total request time: 18.59s
+[CopilotService] ===== RESPONSE (1234 chars) =====
+[CopilotService] <complete model response>
+[CopilotService] ===== END RESPONSE =====
 ```
 
-### "Subscription required"
+**Diagnosing Timeouts**:
+Logs show exactly where delays occur:
+- **Stage 1** (CLI Start): Should be <1s after first request
+- **Stage 2** (Session Create): Usually <1s
+- **Stage 3** (Model Response): Where most time is spent (varies by complexity)
 
-If you see subscription-related errors, ensure you have access to GitHub Copilot through your GitHub account.
+If timeout occurs:
+```
+[CopilotService] TIMEOUT after 300.12s!
+[CopilotService] Timeout details: SendAndWaitAsync timed out after 00:05:00
+[CopilotService] Stack trace: ...
+```
 
-### How the SDK works
+**Launch Configuration**: See `.vscode/launch.json` for ARM64/x64 debug settings
 
-The GitHub Copilot SDK:
-- Communicates with the Copilot CLI in server mode
-- Starts the CLI process automatically when needed
-- Manages the connection and message passing
-- **Does NOT download/install the CLI** - you must install it first
+## Known Issues
 
-### Connection issues
+### TextBox Cursor Spacing
 
-If you experience connection problems:
-1. Verify CLI is installed: `gh copilot --version`
-2. Check authentication: `gh auth status`  
-3. Test CLI directly: `gh copilot suggest "test"`
-4. Restart the application
+**Symptom**: Space gradually appears between typed text and cursor as you type
 
-### Icon not showing
+**Cause**: WinUI 3 TextBox layout bug when combining variable fonts, fixed heights, and padding
 
-The GitHub logo should be in the `Assets` folder and copied to the output directory during build.
+**Status**: Partially mitigated by using minimal TextBox properties. May still occur occasionally.
+
+**Workaround**: Restart the application if typing becomes difficult.
+
+**Technical Details**: Issue occurs when WinUI's text measurement desyncs from cursor position calculation. Related to:
+- Variable font rendering (Segoe UI Variable)
+- Fixed height constraints
+- Complex layout property interactions
+
+See AGENTS.md for detailed technical analysis.
+
+### SDK/CLI Version Compatibility
+
+**Symptom**: Authentication errors or session creation failures
+
+**Cause**: SDK v0.1.20 may have compatibility issues with newer CLI versions (v0.0.401+)
+
+**Diagnosis**: Check debug logs for:
+```
+[CopilotService] CLI startup failed: ...
+[CopilotService] Stage 2 (Session Create): <long time or error>
+```
+
+**Workaround**: Ensure CLI is properly authenticated:
+```powershell
+copilot auth login
+copilot chat "test"  # Verify CLI works standalone
+```
+
+## Troubleshooting
+
+**CLI not found**:
+```powershell
+winget install --id GitHub.Copilot
+copilot --version
+```
+
+**Authentication errors**:
+```powershell
+copilot auth login  # or: gh auth login
+copilot --version   # verify
+```
+
+**Subscription errors**: Verify GitHub Copilot access on your account.
+
+**SDK Notes**:
+- SDK communicates via JSON-RPC over stdio
+- Starts CLI process automatically in server mode
+- Does not bundle or install CLI
+
+**Connection issues**:
+1. Check CLI: `copilot --version`
+2. Test directly: `copilot chat "test"`
+3. Restart application
 
 ## Development
 
-### Building
-
+**Build**:
 ```powershell
-# Debug build
-dotnet build
-
-# Release build
 dotnet build --configuration Release
-
-# Clean build
-dotnet clean && dotnet build
 ```
 
-### Publishing (Self-Contained with ReadyToRun)
-
-Build optimized single-file binaries for faster startup:
-
+**Publish** (self-contained required for unpackaged WinUI 3):
 ```powershell
-# For x64 (AMD64)
-dotnet publish -c Release -r win-x64
-
-# For ARM64
-dotnet publish -c Release -r win-arm64
+dotnet publish -c Release -r win-x64    # x64
+dotnet publish -c Release -r win-arm64  # ARM64
 ```
 
-Published binaries include:
-- **Single-file executable** - All managed code bundled into one .exe
-- **ReadyToRun (R2R)** - Pre-compiled code for faster startup
-- **Self-contained** - Includes .NET runtime (no installation required)
-- Native dependencies extracted on first run
+Output: `bin\Release\net10.0-windows10.0.19041.0\{runtime}\publish\`
 
-Output location: `bin\Release\net10.0-windows10.0.19041.0\{runtime}\publish\`
+**Key Dependencies**:
+- `Microsoft.WindowsAppSDK` - WinUI 3 framework
+- `GitHub.Copilot.SDK` v0.1.20 - Copilot integration
+- `Microsoft.Data.Sqlite` - Persistence
+- `CommunityToolkit.WinUI.UI.Controls.Markdown` - Message rendering
+- Framework references: WindowsForms (NotifyIcon), WPF (UI Automation)
 
-### Dependencies
+## Technical Notes
 
-- **Microsoft.WindowsAppSDK**: Windows App SDK for WinUI 3
-- **H.NotifyIcon.WinUI**: System tray icon support
-- **Microsoft.Data.Sqlite**: SQLite database provider
-- **CommunityToolkit.WinUI.Controls**: Additional WinUI controls
+**Type Safety**: SDK v0.1.20 uses internal types. Solution uses `dynamic` with pattern matching:
+```csharp
+if (responseEvent?.Data?.Content is string content) { }
+```
+
+**Deployment Constraints**:
+- Self-contained deployment required (unpackaged WinUI 3 limitation)
+- Single-file publish incompatible with WinUI 3
+- Native AOT not supported
+
+**Context Detection Performance**:
+- Strong context (Explorer/Terminal/IDE + WSL detection): 15-30ms (no screenshot)
+- Weak context (generic app): 250-400ms (includes screenshot + OCR)
+- Full developer context: 500-700ms
+
+**Timeout Handling**:
+- SDK timeout: 300 seconds (5 minutes)
+- UI timeout matches SDK
+- Staged diagnostics identify bottlenecks (CLI start, session create, model response)
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- GitHub Copilot for AI assistance
-- Microsoft for WinUI 3 and Windows App SDK
-- H.NotifyIcon contributors for system tray support
+MIT License - see [LICENSE](LICENSE)

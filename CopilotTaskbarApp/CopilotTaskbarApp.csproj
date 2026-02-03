@@ -25,6 +25,7 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
     
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.Wpf" />
   </ItemGroup>
 
   <ItemGroup>

@@ -205,33 +205,20 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <TextBox Grid.Column="0" x:Name="InputBox"
                      PlaceholderText="Ask GitHub Copilot..."
                      AcceptsReturn="False"
+                     TextWrapping="NoWrap"
+                     IsSpellCheckEnabled="False"
+                     IsTextPredictionEnabled="False"
                      KeyDown="InputBox_KeyDown"
                      Margin="0,0,8,0"
                      VerticalAlignment="Center"
-                     FontSize="{StaticResource StandardFontSize}"
-                     Padding="8,10,0,10"
-                     Height="46"
-                     MinHeight="46"
-                     MaxHeight="46"
-                     VerticalContentAlignment="Top"/>
+                     FontSize="{StaticResource StandardFontSize}"/>
 
-            <Button Grid.Column="1" x:Name="ScreenshotButton"
-                    Click="ScreenshotButton_Click"
-                    Margin="0,0,8,0"
-                    VerticalAlignment="Center"
-                    Height="36" Width="36"
-                    Padding="0"
-                    ToolTipService.ToolTip="Attach Screenshot">
-                <FontIcon Glyph="&#xE722;" FontSize="16"/>
-            </Button>
-
-            <Button Grid.Column="2" x:Name="SendButton"
+            <Button Grid.Column="1" x:Name="SendButton"
                     Style="{StaticResource AccentButtonStyle}"
                     Click="SendButton_Click"
                     Margin="0,0,0,0"
