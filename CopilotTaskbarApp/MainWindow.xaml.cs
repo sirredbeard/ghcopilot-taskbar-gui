@@ -1,15 +1,11 @@
+using CopilotTaskbarApp.Native;
+using CopilotTaskbarApp.Native.Efficiency;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using System;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Drawing;
-using System.IO;
-using System.Threading.Tasks;
-using System.Runtime.InteropServices.WindowsRuntime;
-using WinForms = System.Windows.Forms;
+
 
 namespace CopilotTaskbarApp;
 
@@ -19,8 +15,11 @@ public sealed partial class MainWindow : Window
     private readonly CopilotService _copilotService;
     private readonly ContextService _contextService;
     private readonly PersistenceService _persistenceService;
-    private WinForms.NotifyIcon? _notifyIcon;
-    
+
+    private NativeWindow? _nativeWindow;
+    private WindowTrayHandler? _windowTrayHandler;
+    private bool _isAlwaysOnTop;
+
     // Avatar images
     private string? _userDisplayName;
     private string _copilotAvatarPath = "Assets/copilot-logo.png";
@@ -30,20 +29,13 @@ public sealed partial class MainWindow : Window
     private int _historyIndex = -1;
     private string _currentInput = "";
     
-    private Microsoft.UI.Windowing.AppWindow _appWindow;
+    private readonly Microsoft.UI.Windowing.AppWindow _appWindow;
     private bool _isExiting = false;
 
     public MainWindow()
     {
         InitializeComponent();
-        
-        // Ensure WinForms high DPI mode is set for the tray icon context menu
-        try 
-        {
-            WinForms.Application.SetHighDpiMode(WinForms.HighDpiMode.PerMonitorV2);
-        }
-        catch { /* Might fail if already set, which is fine */ }
-        
+
         // Get AppWindow immediately for event handling
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -218,70 +210,38 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
         // Only initialize once
-        if (_notifyIcon == null && args.WindowActivationState != WindowActivationState.Deactivated)
+        if (_nativeWindow == null && args.WindowActivationState != WindowActivationState.Deactivated)
         {
             this.Activated -= MainWindow_Activated; // Unsubscribe
-            InitializeTrayIcon();
+            InitializeNativeWindowAndTrayIcon();
         }
     }
 
     private void ShowMainWindow()
     {
-        // Show and activate the window
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        ShowWindow(hwnd, SW_SHOW);
-        
-        // Force window to foreground
-        SetForegroundWindow(hwnd);
+        EfficiencyModeUtilities.SetEfficiencyMode(false);
+        _nativeWindow?.BringToFront();
         this.Activate();
-        
+
         // Reposition to ensure it's in bottom right
         PositionWindowBottomRight();
-        
+
         // Ensure focus is on input box
         InputBox.Focus(FocusState.Programmatic);
     }
 
     private void HideMainWindow()
     {
-        // Hide the window but keep app running
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        ShowWindow(hwnd, SW_HIDE);
+        _nativeWindow?.Hide();
+        EfficiencyModeUtilities.SetEfficiencyMode(true);
     }
 
-    // Win32 API for hiding/showing window
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-    private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
-    private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
-    private const uint SWP_NOMOVE = 0x0002;
-    private const uint SWP_NOSIZE = 0x0001;
-    
-    private const int SW_HIDE = 0;
-    private const int SW_SHOW = 5;
-
-    private bool _isAlwaysOnTop = false;
-
-    private void ShowWindow_Click(object sender, RoutedEventArgs e)
+    private void ToggleWindowVisibility()
     {
-        this.Activate();
-    }
-
-    private void Exit_Click(object sender, RoutedEventArgs e)
-    {
-        _isExiting = true;
-        Application.Current.Exit();
+        if (_nativeWindow?.IsVisible() == true)
+            HideMainWindow();
+        else
+            ShowMainWindow();
     }
 
     private async void InitializeCopilot()
@@ -366,103 +326,66 @@ public sealed partial class MainWindow : Window
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _notifyIcon?.Dispose();
+        _nativeWindow?.UnregisterHotKey();
+        _windowTrayHandler?.Dispose();
+        _nativeWindow?.Dispose();
         await _copilotService.DisposeAsync();
     }
 
-    private void InitializeTrayIcon()
+    private void InitializeNativeWindowAndTrayIcon()
     {
         try
         {
-            _notifyIcon = new WinForms.NotifyIcon
-            {
-                Text = "GitHub Copilot Chat",
-                Visible = true
-            };
+            _nativeWindow = new NativeWindow(this);
 
+            // setup icon for tray - try copilot-icon.ico first, fallback to github-mark.ico
             var baseDir = AppContext.BaseDirectory;
             var iconPath = Path.Combine(baseDir, "Assets", "copilot-icon.ico");
             if (!File.Exists(iconPath))
             {
                 iconPath = Path.Combine(baseDir, "Assets", "github-mark.ico");
             }
-            
-            if (File.Exists(iconPath) && new FileInfo(iconPath).Length > 0)
+
+            if (File.Exists(iconPath))
             {
-                _notifyIcon.Icon = new Icon(iconPath);
-            }
-            else
-            {
-                var bmp = new System.Drawing.Bitmap(32, 32);
-                var g = System.Drawing.Graphics.FromImage(bmp);
-                g.Clear(System.Drawing.Color.Purple);
-                g.FillEllipse(System.Drawing.Brushes.White, 8, 8, 16, 16);
-                g.Dispose();
-                _notifyIcon.Icon = Icon.FromHandle(bmp.GetHicon());
+                _nativeWindow.SetupIcon(iconPath);
             }
 
-            var contextMenu = new WinForms.ContextMenuStrip
+            // Setup tray handler for context menu and click events
+            _windowTrayHandler = new WindowTrayHandler(this);
+            _windowTrayHandler.IsAlwaysOnTop = () => _isAlwaysOnTop;
+            _windowTrayHandler.MenuShowWindow += () => DispatcherQueue.TryEnqueue(() => ShowMainWindow());
+            _windowTrayHandler.MenuHideWindow += () => DispatcherQueue.TryEnqueue(() => HideMainWindow());
+            _windowTrayHandler.MenuToggleAlwaysOnTop += () =>
             {
-                RenderMode = WinForms.ToolStripRenderMode.System,
-                Font = new System.Drawing.Font("Segoe UI", 9F)
+                _isAlwaysOnTop = !_isAlwaysOnTop;
+                _nativeWindow.SetAlwaysOnTop(_isAlwaysOnTop);
             };
-            
-            contextMenu.Items.Add("Show Chat", null, (s, e) =>
+            _windowTrayHandler.MenuCloseApplication += () => DispatcherQueue.TryEnqueue(() =>
             {
-                DispatcherQueue.TryEnqueue(() => ShowMainWindow());
+                _isExiting = true;
+                Application.Current.Exit();
             });
-            contextMenu.Items.Add("Hide Chat", null, (s, e) => 
+            _windowTrayHandler.TrayIconMouseEventReceived += (mouseEvent) =>
             {
-                DispatcherQueue.TryEnqueue(() => HideMainWindow());
-            });
-            contextMenu.Items.Add("-");
-
-            var alwaysOnTopItem = new WinForms.ToolStripMenuItem("Always on Top")
-            {
-                CheckOnClick = true,
-                Checked = _isAlwaysOnTop
-            };
-            alwaysOnTopItem.Click += (s, e) => 
-            {
-                _isAlwaysOnTop = alwaysOnTopItem.Checked;
-                DispatcherQueue.TryEnqueue(() => ToggleAlwaysOnTop(_isAlwaysOnTop));
-            };
-            contextMenu.Items.Add(alwaysOnTopItem);
-
-            contextMenu.Items.Add("Exit", null, (s, e) => 
-            {
-                DispatcherQueue.TryEnqueue(() => 
+                if (mouseEvent == MouseEvent.IconLeftMouseDown)
                 {
-                    _isExiting = true;
-                    _notifyIcon?.Dispose();
-                    Application.Current.Exit();
-                });
-            });
-            
-            _notifyIcon.ContextMenuStrip = contextMenu;
-            
-            _notifyIcon.MouseClick += (s, e) => 
-            {
-                if (e.Button != WinForms.MouseButtons.Left)
-                    return;
-
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-                    if (IsWindowVisible(hwnd))
-                        HideMainWindow();
-                    else
-                        ShowMainWindow();
-                });
+                    DispatcherQueue.TryEnqueue(() => ToggleWindowVisibility());
+                }
             };
+
+            // Set up global hotkey (Alt+G) to toggle window visibility
+            _windowTrayHandler.HotKeyEventReceived += () =>
+            {
+                DispatcherQueue.TryEnqueue(() => ToggleWindowVisibility());
+            };
+
+            // Register Alt+G global hotkey
+            _nativeWindow.RegisterHotKey(
+                Windows.Win32.UI.Input.KeyboardAndMouse.HOT_KEY_MODIFIERS.MOD_ALT,
+                Windows.System.VirtualKey.G);
         }
         catch { }
-    }
-
-    private void ToggleAlwaysOnTop(bool enable)
-    {
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        SetWindowPos(hwnd, enable ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     }
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -507,7 +430,7 @@ public sealed partial class MainWindow : Window
                     return;
                 }
             }
-            else
+            else          
             {
                 int newIndex = _historyIndex + direction;
 

@@ -8,6 +8,7 @@
     <Nullable>enable</Nullable>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
+    <Configurations>Debug;Release;Debug-Net10;Release-Net10</Configurations>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <SelfContained>true</SelfContained>
@@ -20,15 +21,26 @@
     <TieredCompilation>true</TieredCompilation>
   </PropertyGroup>
 
+  <!-- .NET 10 configurations: override TFM and disable trimming -->
+  <PropertyGroup Condition="$(Configuration.EndsWith('-Net10'))">
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <PublishTrimmed>false</PublishTrimmed>
+    <TrimMode></TrimMode>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release-Net10'">
+    <Optimize>True</Optimize>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.Markdown" Version="7.1.2" />
     <PackageReference Include="GitHub.Copilot.SDK" Version="0.1.24-preview.0" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.269">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260209005" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.3" />
-    
-    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
-    <FrameworkReference Include="Microsoft.WindowsDesktop.App.Wpf" />
   </ItemGroup>
 
   <ItemGroup>

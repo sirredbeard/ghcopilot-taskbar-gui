@@ -1,7 +1,6 @@
+using CopilotTaskbarApp.Native;
 using Microsoft.UI.Xaml;
-using System;
 using System.Diagnostics;
-using WinForms = System.Windows.Forms;
 
 namespace CopilotTaskbarApp;
 
@@ -19,8 +18,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             Debug.WriteLine($"App constructor error: {ex}");
-            WinForms.MessageBox.Show($"App constructor error: {ex.Message}\n\n{ex.StackTrace}", 
-                "App Error", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+            NativeHelpers.ShowErrorBox($"App constructor error: {ex.Message}\n\n{ex.StackTrace}", "App Error");
             throw;
         }
     }
@@ -28,8 +26,7 @@ public partial class App : Application
     private void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
         Debug.WriteLine($"Unhandled exception: {e.Exception}");
-        WinForms.MessageBox.Show($"Unhandled exception: {e.Exception.Message}\n\n{e.Exception.StackTrace}", 
-            "Unhandled Error", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+        NativeHelpers.ShowErrorBox($"Unhandled exception: {e.Exception.Message}\n\n{e.Exception.StackTrace}", "Unhandled Error");
         e.Handled = true;
     }
 
@@ -43,9 +40,10 @@ public partial class App : Application
         catch (Exception ex)
         {
             Debug.WriteLine($"OnLaunched error: {ex}");
-            WinForms.MessageBox.Show($"OnLaunched error: {ex.Message}\n\n{ex.StackTrace}", 
-                "Launch Error", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+            NativeHelpers.ShowErrorBox($"OnLaunched error: {ex.Message}\n\n{ex.StackTrace}", "Launch Error");
             throw;
         }
     }
+
+
 }

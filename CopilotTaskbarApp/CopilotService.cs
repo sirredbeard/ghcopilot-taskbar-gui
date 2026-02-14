@@ -1,11 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
-using WinForms = System.Windows.Forms;
+using System.Diagnostics.CodeAnalysis;
 
 namespace CopilotTaskbarApp;
 

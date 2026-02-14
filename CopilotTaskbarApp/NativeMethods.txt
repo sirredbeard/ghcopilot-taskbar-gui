@@ -1,0 +1,35 @@
+SetWindowSubclass
+RemoveWindowSubclass
+DefSubclassProc
+IsWindowVisible
+// to manage icon
+ShowWindow
+SetForegroundWindow
+Shell_NotifyIcon
+LoadImage
+// small menu
+CreatePopupMenu
+AppendMenu
+GetCursorPos
+TrackPopupMenu
+// hotkey
+RegisterHotKey
+UnregisterHotKey
+// windows positions
+SetWindowPos
+HWND_TOPMOST
+HWND_NOTOPMOST
+// window events to handle
+WM_LBUTTONDOWN
+WM_RBUTTONDOWN
+// screen metrics
+GetSystemMetrics
+// message box
+MessageBox
+// power efficiency
+SetPriorityClass
+GetCurrentProcess
+SetProcessInformation
+PROCESS_POWER_THROTTLING_STATE
+PROCESS_POWER_THROTTLING_CURRENT_VERSION
+PROCESS_POWER_THROTTLING_EXECUTION_SPEED

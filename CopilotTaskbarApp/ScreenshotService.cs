@@ -1,9 +1,6 @@
-using System;
+using CopilotTaskbarApp.Native;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
 
 namespace CopilotTaskbarApp;
 
@@ -15,15 +12,13 @@ public class ScreenshotService
     {
         try
         {
-            // Determine the bounds of the virtual screen (all monitors)
-            var bounds = SystemInformation.VirtualScreen;
+            var bounds = NativeHelpers.GetVirtualScreenBounds();
 
             using var bitmap = new Bitmap(bounds.Width, bounds.Height);
             using var g = Graphics.FromImage(bitmap);
-            
+
             // Efficiently copy screen content
             g.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bitmap.Size);
-
             // Resize if too large to save tokens/bandwidth
             // Target max dimension ~1024px to keep payload size reasonable for LLM
             var resized = ResizeBitmap(bitmap, 1024, 1024);
