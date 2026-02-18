@@ -10,6 +10,9 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices.WindowsRuntime;
 using WinForms = System.Windows.Forms;
+using CopilotTaskbarApp.Controls.ChatInput;
+using CopilotTaskbarApp.Controls;
+using Windows.Storage.Pickers;
 
 namespace CopilotTaskbarApp;
 
@@ -32,6 +35,8 @@ public sealed partial class MainWindow : Window
     
     private Microsoft.UI.Windowing.AppWindow _appWindow;
     private bool _isExiting = false;
+
+    public bool IsStreaming { get; set; }
 
     public MainWindow()
     {
@@ -215,14 +220,89 @@ public sealed partial class MainWindow : Window
         appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, width, height));
     }
 
-    private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
+    private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
         // Only initialize once
         if (_notifyIcon == null && args.WindowActivationState != WindowActivationState.Deactivated)
         {
             this.Activated -= MainWindow_Activated; // Unsubscribe
             InitializeTrayIcon();
+
+            await SetupChatInputAsync();
+
+
         }
+    }
+
+    private async Task SetupChatInputAsync()
+    {
+        // fill models
+        chatInput.Models = await _copilotService.GetAvailableModelsAsync();
+
+        if (chatInput.Models.Any())
+        {
+            chatInput.SelectedModel = chatInput.Models.FirstOrDefault(m => m!.Id == "gpt-4.1") ?? chatInput.Models.First();
+        }
+
+        chatInput.AllowedFileExtensions = FileTypesHelpers.GetAllSupportedExtensions().ToList();
+
+        chatInput.MessageSent += ChatInput_MessageSent;
+        chatInput.FileSendRequested += ChatInput_FileSendRequested;
+        chatInput.RequestHistoryItem += ChatInput_RequestHistoryItem;
+
+    }
+
+    private void ChatInput_RequestHistoryItem(object? sender, int e)
+    {
+        NavigateHistory(e);
+    }
+
+    private async void ChatInput_FileSendRequested(object? sender, EventArgs e)
+    {
+        if (chatInput.CurrentAttachment != null)
+        {
+            // Clear current attachment if clicked again
+            chatInput.CurrentAttachment = null;
+            return;
+        }
+
+        FileOpenPicker openPicker = new()
+        {
+            ViewMode = PickerViewMode.List,
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+        };
+        openPicker.FileTypeFilter.Clear();
+
+        foreach (var ext in FileTypesHelpers.GetAllSupportedExtensions())
+        {
+            if (!openPicker.FileTypeFilter.Contains(ext))
+                openPicker.FileTypeFilter.Add(ext);
+        }
+
+        openPicker.FileTypeFilter.Add("*");
+
+        // Since we're in a Page, we need to obtain the parent Window.
+        // Replace this with your app-specific method of getting the Window handle.
+        var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        WinRT.Interop.InitializeWithWindow.Initialize(openPicker, hWnd);
+
+        var file = await openPicker.PickSingleFileAsync();
+
+        Debug.WriteLine(file != null ? $"Picked file: {file.Name}" : "Operation cancelled.");
+
+        if (file != null)
+        {
+            var properties = await file.GetBasicPropertiesAsync();
+
+            chatInput.CurrentAttachment = new FileAttachment
+            {
+                FilePath = file.Path,
+                FileName = file.Name,
+                FileType = file.FileType,
+                FileSize = (long)properties.Size
+            };
+        }
+
     }
 
     private void ShowMainWindow()
@@ -237,9 +317,9 @@ public sealed partial class MainWindow : Window
         
         // Reposition to ensure it's in bottom right
         PositionWindowBottomRight();
-        
+
         // Ensure focus is on input box
-        InputBox.Focus(FocusState.Programmatic);
+        chatInput.FocusInput();
     }
 
     private void HideMainWindow()
@@ -288,8 +368,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            SendButton.IsEnabled = false;
-            InputBox.IsEnabled = false;
+            chatInput.IsEnabled = false;
 
             // Copilot CLI is now bundled with the SDK, so we assume it is installed.
             // Directly check authentication.
@@ -307,8 +386,7 @@ public sealed partial class MainWindow : Window
             _messages.Add(errorMessage);
         }
 
-        SendButton.IsEnabled = true;
-        InputBox.IsEnabled = true;
+        chatInput.IsEnabled = true;
     }
 
     private async Task CheckAuthenticationAsync()
@@ -347,8 +425,7 @@ public sealed partial class MainWindow : Window
                 };
                 _messages.Add(welcomeMessage);
                 
-                SendButton.IsEnabled = true;
-                InputBox.IsEnabled = true;
+                chatInput.IsEnabled = true;
             }
         }
         catch (Exception ex)
@@ -465,29 +542,6 @@ public sealed partial class MainWindow : Window
         SetWindowPos(hwnd, enable ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     }
 
-    private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        // Enter key sends message
-        if (e.Key == Windows.System.VirtualKey.Enter && 
-            !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
-        {
-            e.Handled = true;
-            SendButton_Click(sender, null!);
-        }
-        // Up arrow - navigate to previous command
-        else if (e.Key == Windows.System.VirtualKey.Up)
-        {
-            e.Handled = true;
-            NavigateHistory(-1);
-        }
-        // Down arrow - navigate to next command
-        else if (e.Key == Windows.System.VirtualKey.Down)
-        {
-            e.Handled = true;
-            NavigateHistory(1);
-        }
-    }
-
     private void NavigateHistory(int direction)
     {
         try
@@ -499,7 +553,7 @@ public sealed partial class MainWindow : Window
             {
                 if (direction == -1)
                 {
-                     _currentInput = InputBox.Text ?? "";
+                     _currentInput = chatInput.Message ?? "";
                      _historyIndex = _commandHistory.Count - 1;
                 }
                 else
@@ -518,7 +572,7 @@ public sealed partial class MainWindow : Window
                 else if (newIndex >= _commandHistory.Count)
                 {
                     _historyIndex = -1;
-                    InputBox.Text = _currentInput;
+                    chatInput.Message = _currentInput;
                     return;
                 }
                 
@@ -527,7 +581,7 @@ public sealed partial class MainWindow : Window
 
             if (_historyIndex >= 0 && _historyIndex < _commandHistory.Count)
             {
-                InputBox.Text = _commandHistory[_historyIndex];
+                chatInput.Message = _commandHistory[_historyIndex];
             }
         }
         catch
@@ -536,37 +590,24 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void InputBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    private async void ChatInput_MessageSent(object? sender, MessageEventArgs e)
     {
-        // Required event handler for AutoSuggestBox (no autocomplete needed)
-    }
-
-    private async void InputBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
-    {
-        // Handle Enter key press
-        await SendMessageAsync();
-    }
-
-    private async void SendButton_Click(object sender, RoutedEventArgs e)
-    {
-        await SendMessageAsync();
+        await SendMessageAsync(e.Message, e.Model, e.Attachment?.FilePath);
     }
 
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "CopilotService.GetResponseAsync uses dynamic for SDK internal types. This is isolated and documented.")]
-    private async Task SendMessageAsync()
+    private async Task SendMessageAsync(string input, string model, string? attachment)
     {
         try 
-        {
-            var input = InputBox.Text?.Trim();
-            
+        {            
             if (string.IsNullOrEmpty(input)) 
                 return;
+
+            chatInput.IsStreaming = true;
 
             _commandHistory.Add(input);
             _historyIndex = -1;
             _currentInput = "";
-
-            InputBox.Text = string.Empty;
 
             var userMessage = new ChatMessage
             {
@@ -591,8 +632,6 @@ public sealed partial class MainWindow : Window
 
             DispatcherQueue.TryEnqueue(() => ScrollToBottom());
             
-            SendButton.IsEnabled = true;
-            
             var (currentContext, screenshot) = await _contextService.GetContextAsync();
             userMessage.Context = currentContext;
 
@@ -602,7 +641,7 @@ public sealed partial class MainWindow : Window
                     ? _messages.Take(_messages.Count - 2).ToList() 
                     : null;
                 
-                var responseTask = _copilotService.GetResponseAsync(input, currentContext, screenshot, recentMessages);
+                var responseTask = _copilotService.GetResponseAsync(input, model, currentContext, screenshot, attachment, recentMessages);
                 var timeoutTask = Task.Delay(TimeSpan.FromSeconds(300));
                 
                 var completedTask = await Task.WhenAny(responseTask, timeoutTask);
@@ -673,7 +712,8 @@ public sealed partial class MainWindow : Window
             }
             finally
             {
-                InputBox.Focus(FocusState.Programmatic);
+                chatInput.IsStreaming = false;
+                chatInput.FocusInput();
                 await Task.Delay(100);
                 ScrollToBottom();
             }
@@ -692,7 +732,7 @@ public sealed partial class MainWindow : Window
                     Timestamp = DateTime.Now
                 };
                 _messages.Add(errorMessage);
-                SendButton.IsEnabled = true;
+                chatInput.IsEnabled = true;
             });
         }
     }

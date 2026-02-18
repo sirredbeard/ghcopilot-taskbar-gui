@@ -6,6 +6,7 @@
     xmlns:controls="using:CommunityToolkit.WinUI.UI.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:c="using:CopilotTaskbarApp.Controls"
     mc:Ignorable="d">
 
     <Grid Background="Transparent" CornerRadius="8">
@@ -70,10 +71,10 @@
             
             <local:BoolToVisibilityConverter x:Key="BoolToVisConverter"/>
         </Grid.Resources>
+        
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0" x:Name="TitleBarDragRegion" Background="Transparent" Height="32">
@@ -101,10 +102,19 @@
             </Button>
         </Grid>
 
-        <ScrollViewer Grid.Row="1" x:Name="ChatScrollViewer"
+        <RelativePanel  Grid.Row="1">
+            <ScrollViewer x:Name="ChatScrollViewer"
                       VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
-            <ListView x:Name="ChatListView"
+                      HorizontalScrollBarVisibility="Disabled"
+                      
+                      RelativePanel.AlignTopWithPanel="True"
+                      RelativePanel.Above="chatInput"
+                      RelativePanel.AlignLeftWithPanel="True"
+                      RelativePanel.AlignRightWithPanel="True"
+                        Margin="8,8,0,0"
+                      
+                      >
+                <ListView x:Name="ChatListView"
                       ItemsSource="{x:Bind _messages, Mode=OneWay}" 
                       SelectionMode="None"
                       IsItemClickEnabled="False"
@@ -112,117 +122,102 @@
                       Background="Transparent"
                       ScrollViewer.VerticalScrollBarVisibility="Disabled"
                       ScrollViewer.HorizontalScrollMode="Disabled">
-                <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Margin="0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
 
-                        <Grid Grid.Column="0" 
+                                <Grid Grid.Column="0" 
                               Width="32" Height="32"
                               Margin="8,0,16,0"
                               VerticalAlignment="Top">
-                            
-                            <Image Source="{Binding AvatarImagePath}"
+
+                                    <Image Source="{Binding AvatarImagePath}"
                                    Width="28" 
                                    Height="28"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"
                                    Stretch="Uniform"
                                    Visibility="{Binding ImageVisibilityFixed}"/>
-                            
-                            <Border CornerRadius="16"
+
+                                    <Border CornerRadius="16"
                                     Background="{ThemeResource AccentFillColorDefaultBrush}"
                                     Visibility="{Binding InitialVisibility}">
-                                <TextBlock Text="{Binding UserInitial}"
+                                        <TextBlock Text="{Binding UserInitial}"
                                            FontSize="16"
                                            FontWeight="SemiBold"
                                            HorizontalAlignment="Center" 
                                            VerticalAlignment="Center"
                                            Foreground="White"/>
-                            </Border>
-                        </Grid>
+                                    </Border>
+                                </Grid>
 
-                        <StackPanel Grid.Column="1" Spacing="2" Margin="0,0,12,0">
-                            <TextBlock Text="{Binding RoleDisplay}" 
+                                <StackPanel Grid.Column="1" Spacing="2" Margin="0,0,12,0">
+                                    <TextBlock Text="{Binding RoleDisplay}" 
                                        FontWeight="SemiBold"
                                        FontSize="{StaticResource HeaderFontSize}"
                                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
-                                       
-                            <controls:MarkdownTextBlock Text="{Binding Content, Mode=OneWay}" 
+
+                                    <controls:MarkdownTextBlock Text="{Binding Content, Mode=OneWay}" 
                                                       TextWrapping="Wrap"
                                                       IsTextSelectionEnabled="True"
                                                       Background="Transparent"
                                                       FontSize="{StaticResource StandardFontSize}"
                                                       Margin="0,2,0,8"/>
-                                                      
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                
-                                <TextBlock Text="{Binding FormattedTime}" 
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Text="{Binding FormattedTime}" 
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            FontSize="11"
                                            VerticalAlignment="Center"/>
-                                           
-                                <Button Grid.Column="1"
+
+                                        <Button Grid.Column="1"
                                         Style="{StaticResource SubtlerButtonStyle}"
                                         Click="CopyButton_Click"
                                         Visibility="{Binding IsAssistantMessage, Converter={StaticResource BoolToVisConverter}}"
                                         Padding="4"
                                         CornerRadius="4"
                                         ToolTipService.ToolTip="Copy to clipboard">
-                                    <FontIcon Glyph="&#xE8C8;" FontSize="12"/>
-                                </Button>
+                                            <FontIcon Glyph="&#xE8C8;" FontSize="12"/>
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
                             </Grid>
-                        </StackPanel>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
 
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                    <Setter Property="Padding" Value="0"/>
-                    <Setter Property="Margin" Value="0"/>
-                    <Setter Property="MinHeight" Value="0"/>
-                    <Setter Property="IsHitTestVisible" Value="True"/>
-                </Style>
-            </ListView.ItemContainerStyle>
-        </ListView>
-        </ScrollViewer>
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0"/>
+                            <Setter Property="MinHeight" Value="0"/>
+                            <Setter Property="IsHitTestVisible" Value="True"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                </ListView>
+            </ScrollViewer>
 
-        <Grid Grid.Row="2" Background="{ThemeResource LayerFillColorDefaultBrush}" 
-              Padding="12,12,12,12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" 
-              BorderThickness="0,1,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <AutoSuggestBox Grid.Column="0" x:Name="InputBox"
-                            PlaceholderText="Ask GitHub Copilot..."
-                            FontFamily="Segoe UI"
-                            FontSize="16"
-                            Padding="12,8,12,8"
-                            Margin="0,0,8,0"
-                            TextChanged="InputBox_TextChanged"
-                            QuerySubmitted="InputBox_QuerySubmitted"
-                            KeyDown="InputBox_KeyDown"/>
-
-            <Button Grid.Column="1" x:Name="SendButton"
-                    Style="{StaticResource AccentButtonStyle}"
-                    Click="SendButton_Click"
-                    Margin="0,0,0,0"
-                    VerticalAlignment="Center"
-                    Padding="10,6"
-                    ToolTipService.ToolTip="Send Message">
-                <FontIcon Glyph="&#xE768;" FontSize="16"/>
-            </Button>
-        </Grid>
+            <!-- Chat input box fixed at the bottom -->
+            <c:ChatInputControl
+            RelativePanel.AlignBottomWithPanel="True"
+            RelativePanel.AlignLeftWithPanel="True"
+            RelativePanel.AlignRightWithPanel="True"
+            HorizontalAlignment="Stretch"
+            Margin="8,0,8,8"
+            x:Name="chatInput">
+                <c:ChatInputControl.Shadow>
+                    <ThemeShadow/>
+                </c:ChatInputControl.Shadow>
+            </c:ChatInputControl>
+        </RelativePanel>
     </Grid>
 </Window>
