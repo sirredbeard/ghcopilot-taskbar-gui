@@ -17,26 +17,29 @@ namespace CopilotTaskbarApp.Controls;
 
 public sealed partial class ChatInputControl : UserControl, INotifyPropertyChanged, IDisposable
 {
-    const string NoModelsId = "no-models";
+    private const string NoModelsId = "no-models";
+
     private string _message = string.Empty;
-    private bool disposedValue;
+    private bool _disposed;
+    private FileAttachment? _currentAttachment;
+    private List<string>? _allowedFileExtensions = [];
+
+    #region Events
 
     public event EventHandler<MessageEventArgs>? MessageSent;
     public event EventHandler? StreamingStopRequested;
     public event EventHandler? FileSendRequested;
     public event PropertyChangedEventHandler? PropertyChanged;
-
     public event EventHandler<int>? RequestHistoryItem; // -1 for previous, +1 for next
+    public event EventHandler<WarningEventArgs>? ShowWarningRequested;
 
-    public event EventHandler<WarningEventArgs> ShowWarningRequested;
+    #endregion
+
+    #region Properties
 
     public string Message
     {
-        get
-        {
-            return _message;
-        }
-
+        get => _message;
         set
         {
             if (_message != value)
@@ -47,171 +50,80 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
         }
     }
 
-    public ChatInputControl()
+    public FileAttachment? CurrentAttachment
     {
-        this.InitializeComponent();
-
-        ButtonSend.IsEnabled = false; // Initially disabled
-    }
-
-    #region Event Handlers
-    private void MessageInput_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        var hasEnoughCharsForTooltip = MessageInput.Text.Length >= 5;
-
-        UpdateSendButtonState();
-        HelpTextBlock.Visibility = hasEnoughCharsForTooltip ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void UpdateSendButtonState()
-    {
-        var hasText = !string.IsNullOrEmpty(MessageInput.Text);
-        var hasSelectedModel = SelectedModel != null && SelectedModel.Id != NoModelsId;
-
-        ButtonSend.IsEnabled = hasText && !IsStreaming && hasSelectedModel;
-    }
-
-    private void MessageInput_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (IsStreaming)
+        get => _currentAttachment;
+        set
         {
-            return; // do nothing if streaming
-        }
-
-        if (e.Key == Windows.System.VirtualKey.Enter)
-        {
-            var keyState = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
-            if ((keyState & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down)
-            {
-                // Allow new line when Shift+Enter is pressed
-                return;
-            }
-            else
-            {
-                // Prevent default Enter behavior and handle it (e.g., send message)
-                e.Handled = true;
-
-                DoMessageSend();
-            }
-        }
-        else if (e.Key == Windows.System.VirtualKey.Up)
-        {
-            e.Handled = true;
-            RequestHistoryItem?.Invoke(this, -1);
-        }
-        // Down arrow - navigate to next command
-        else if (e.Key == Windows.System.VirtualKey.Down)
-        {
-            e.Handled = true;
-            RequestHistoryItem?.Invoke(this, 1);
+            _currentAttachment = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentAttachment)));
+            UpdateFileButtonState();
         }
     }
+
+    public List<string>? AllowedFileExtensions
+    {
+        get => _allowedFileExtensions;
+        set
+        {
+            _allowedFileExtensions = value;
+            UpdateFileButtonState();
+        }
+    }
+
+    public bool ReadOnly { get; internal set; }
+
     #endregion
 
-    private void ButtonSend_Click(object sender, RoutedEventArgs e)
-    {
-        if (IsStreaming)
-        {
-            return;
-        }
+    #region Dependency Properties
 
-        DoMessageSend();
+    public bool IsStreaming
+    {
+        get => (bool)GetValue(IsStreamingProperty);
+        set => SetValue(IsStreamingProperty, value);
     }
 
-    private void DoMessageSend()
+    public static readonly DependencyProperty IsStreamingProperty =
+        DependencyProperty.Register(nameof(IsStreaming), typeof(bool), typeof(ChatInputControl),
+            new PropertyMetadata(false, OnIsStreamingChanged));
+
+    public ObservableCollection<ModelRecord> Models
     {
-        if (SelectedModel == null || SelectedModel.Id == NoModelsId)
-        {
-            // No model selected or placeholder is selected - can't send message
-            return;
-        }
-
-        if (!string.IsNullOrEmpty(Message) || CurrentAttachment != null)
-        {
-            MessageSent?.Invoke(this, new MessageEventArgs
-            {
-                Message = Message.Trim(),
-                Model = SelectedModel.Id,
-                Attachment = CurrentAttachment
-            });
-
-            // Clear after sending
-            Message = string.Empty;
-            CurrentAttachment = null;
-        }
+        get => (ObservableCollection<ModelRecord>)GetValue(ModelsProperty);
+        set => SetValue(ModelsProperty, value);
     }
 
-    private void ButtonStop_Click(object sender, RoutedEventArgs e)
+    public static readonly DependencyProperty ModelsProperty =
+        DependencyProperty.Register(nameof(Models), typeof(ObservableCollection<ModelRecord>), typeof(ChatInputControl),
+            new PropertyMetadata(new ObservableCollection<ModelRecord>(), OnModelsSet));
+
+    public ModelRecord SelectedModel
     {
-        // Raise stop streaming event
-        StreamingStopRequested?.Invoke(this, EventArgs.Empty);
+        get => (ModelRecord)GetValue(SelectedModelProperty);
+        set => SetValue(SelectedModelProperty, value);
     }
 
-    private void ButtonFile_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    public static readonly DependencyProperty SelectedModelProperty =
+        DependencyProperty.Register(nameof(SelectedModel), typeof(ModelRecord), typeof(ChatInputControl),
+            new PropertyMetadata(default(ModelRecord), OnSelectedModelSet));
+
+    #endregion
+
+    public ChatInputControl()
     {
-        e.Handled = true;
-        CurrentAttachment = null;
+        InitializeComponent();
+        ButtonSend.IsEnabled = false;
     }
 
-    private void ButtonFile_Click(object sender, RoutedEventArgs e)
+    #region Public Methods
+
+    public int GetCursorPosition() => MessageInput.SelectionStart;
+
+    public void SetCursorPosition(int position)
     {
-        FileSendRequested?.Invoke(sender, EventArgs.Empty);
-    }
-
-    private void PopulateModelSelector()
-    {
-        if (ModelSelector.Flyout is MenuFlyout flyout)
-        {
-            flyout.Items.OfType<MenuFlyoutItem>()
-                .ToList().ForEach(item => item.Click -= ModelMenuItem_Click);
-            flyout.Items.Clear();
-
-            if (Models == null || Models.Count == 0)
-            {
-                // No models available
-                var addModelItem = new MenuFlyoutItem
-                {
-                    Text = "No models found",
-                    Tag = new ModelRecord(NoModelsId, "Add Model", "Add Model")
-                };
-            }
-            else
-            {
-                // Process all models in a single loop
-                foreach (var model in Models)
-                {
-                    var displayText = model.Name;
-                    var item = new MenuFlyoutItem { Text = displayText, Tag = model };
-                    item.Click += ModelMenuItem_Click;
-                    flyout.Items.Add(item);
-                }                
-            }
-        }
-    }
-
-    private void ModelMenuItem_Click(object sender, RoutedEventArgs e)
-    {
-        var record = (ModelRecord)((MenuFlyoutItem)sender).Tag;
-        SelectedModel = record;
-    }
-
-    private void SwitchStreaming(bool isStreaming)
-    {
-        // switch button visibility
-        this.ButtonStop.Visibility = isStreaming ? Visibility.Visible : Visibility.Collapsed;
-        this.ButtonSend.Visibility = ButtonStop.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible; // isStreaming || Message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-
-        this.ButtonFile.IsEnabled = !isStreaming;
-        this.MessageInput.IsEnabled = !isStreaming;
-        this.ModelSelector.IsEnabled = !isStreaming;
-
-        // Update send button state considering the new streaming state
-        UpdateSendButtonState();
-
-        if (!isStreaming)
-        {
-            this.MessageInput.Focus(FocusState.Programmatic);
-        }
+        position = Math.Clamp(position, 0, MessageInput.Text?.Length ?? 0);
+        MessageInput.SelectionStart = position;
+        MessageInput.SelectionLength = 0;
     }
 
     internal async void FocusInput()
@@ -224,40 +136,392 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
         }
     }
 
-    /// <summary>
-    /// Get the current cursor position in the message input
-    /// </summary>
-    /// <returns>The cursor position (SelectionStart)</returns>
-    public int GetCursorPosition()
+    #endregion
+
+    #region Input Event Handlers
+
+    private void MessageInput_TextChanged(object sender, TextChangedEventArgs e)
     {
-        return MessageInput.SelectionStart;
+        var hasEnoughCharsForTooltip = MessageInput.Text.Length >= 5;
+
+        UpdateSendButtonState();
+        HelpTextBlock.Visibility = hasEnoughCharsForTooltip ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>
-    /// Set the cursor position in the message input
-    /// </summary>
-    /// <param name="position">The position to set the cursor to</param>
-    public void SetCursorPosition(int position)
+    private void MessageInput_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (position < 0) position = 0;
-        if (position > (MessageInput.Text?.Length ?? 0)) position = MessageInput.Text?.Length ?? 0;
+        if (IsStreaming)
+            return;
 
-        MessageInput.SelectionStart = position;
-        MessageInput.SelectionLength = 0;
-    }
-
-    private FileAttachment? _currentAttachment;
-    private List<string>? _allowedFileExtensions = [];
-
-    public FileAttachment? CurrentAttachment
-    {
-        get => _currentAttachment;
-        set
+        if (e.Key == VirtualKey.Enter)
         {
-            _currentAttachment = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentAttachment)));
-            UpdateFileButtonState();
+            var keyState = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
+            if ((keyState & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down)
+                return; // Allow new line with Shift+Enter
+
+            e.Handled = true;
+            DoMessageSend();
         }
+        else if (e.Key == VirtualKey.Up)
+        {
+            e.Handled = true;
+            RequestHistoryItem?.Invoke(this, -1);
+        }
+        else if (e.Key == VirtualKey.Down)
+        {
+            e.Handled = true;
+            RequestHistoryItem?.Invoke(this, 1);
+        }
+    }
+
+    #endregion
+
+    #region Button Handlers
+
+    private void ButtonSend_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsStreaming)
+            DoMessageSend();
+    }
+
+    private void ButtonStop_Click(object sender, RoutedEventArgs e)
+    {
+        StreamingStopRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ButtonFile_Click(object sender, RoutedEventArgs e)
+    {
+        FileSendRequested?.Invoke(sender, EventArgs.Empty);
+    }
+
+    private void ButtonFile_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        CurrentAttachment = null;
+    }
+
+    #endregion
+
+    #region Drag & Drop
+
+    private void MessageInput_DragOver(object sender, DragEventArgs e)
+    {
+        e.AcceptedOperation = DataPackageOperation.Copy;
+        e.DragUIOverride.IsContentVisible = true;
+        e.DragUIOverride.IsGlyphVisible = false;
+        e.DragUIOverride.IsCaptionVisible = false;
+    }
+
+    private void MessageInput_DragEnter(object sender, DragEventArgs e)
+    {
+        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            DropOverlay.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void MessageInput_DragLeave(object sender, DragEventArgs e)
+    {
+        DropOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private async void MessageInput_Drop(object sender, DragEventArgs e)
+    {
+        DropOverlay.Visibility = Visibility.Collapsed;
+
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+            return;
+
+        var items = await e.DataView.GetStorageItemsAsync();
+        var file = items.FirstOrDefault() as StorageFile;
+
+        if (file != null && await ValidateFileAsync(file))
+        {
+            var properties = await file.GetBasicPropertiesAsync();
+            CurrentAttachment = new FileAttachment
+            {
+                FilePath = file.Path,
+                FileName = file.Name,
+                FileType = file.FileType,
+                FileSize = (long)properties.Size
+            };
+        }
+        else
+        {
+            ShowWarningRequested?.Invoke(this, new WarningEventArgs("Invalid file",
+                "The file you are trying to attach is not supported or exceeds the size limit."));
+        }
+    }
+
+    #endregion
+
+    #region Clipboard / Paste
+
+    private async void MessageInput_Paste(object sender, TextControlPasteEventArgs e)
+    {
+        var dataPackage = Clipboard.GetContent();
+
+        if (dataPackage.Contains(StandardDataFormats.StorageItems))
+        {
+            e.Handled = true;
+            await HandleStorageItemsPaste(dataPackage);
+        }
+        else if (dataPackage.Contains(StandardDataFormats.Bitmap))
+        {
+            e.Handled = true;
+            await HandleImagePaste(dataPackage);
+        }
+    }
+
+    private async Task HandleStorageItemsPaste(DataPackageView dataPackage)
+    {
+        try
+        {
+            var items = await dataPackage.GetStorageItemsAsync();
+            if (items.Count == 0)
+                return;
+
+            var file = items[0] as StorageFile;
+            if (file == null)
+                return;
+
+            var properties = await file.GetBasicPropertiesAsync();
+            CurrentAttachment = new FileAttachment
+            {
+                FilePath = file.Path,
+                FileName = file.Name,
+                FileType = file.FileType,
+                FileSize = (long)properties.Size
+            };
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to handle file paste: {ex}");
+            ShowAttachmentError("Failed to attach file from clipboard");
+        }
+    }
+
+    private async Task HandleImagePaste(DataPackageView dataPackage)
+    {
+        try
+        {
+            var imageStream = await dataPackage.GetBitmapAsync();
+            if (imageStream == null)
+                return;
+
+            string fileName = $"clipboard_image_{DateTime.Now:yyyyMMddHHmmss}.png";
+            string tempPath = Path.Combine(Path.GetTempPath(), fileName);
+
+            using var randomAccessStream = await imageStream.OpenReadAsync();
+            var decoder = await BitmapDecoder.CreateAsync(randomAccessStream);
+
+            uint originalWidth = decoder.PixelWidth;
+            uint originalHeight = decoder.PixelHeight;
+            const uint MAX_DIMENSION = 1568;
+
+            uint newWidth = originalWidth;
+            uint newHeight = originalHeight;
+
+            if (originalWidth > MAX_DIMENSION || originalHeight > MAX_DIMENSION)
+            {
+                if (originalWidth > originalHeight)
+                {
+                    newWidth = MAX_DIMENSION;
+                    newHeight = (uint)(originalHeight * (MAX_DIMENSION / (double)originalWidth));
+                }
+                else
+                {
+                    newHeight = MAX_DIMENSION;
+                    newWidth = (uint)(originalWidth * (MAX_DIMENSION / (double)originalHeight));
+                }
+            }
+
+            using (var fileStream = new FileStream(tempPath, FileMode.Create))
+            {
+                var outputStream = fileStream.AsRandomAccessStream();
+                var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, outputStream);
+
+                encoder.BitmapTransform.ScaledWidth = newWidth;
+                encoder.BitmapTransform.ScaledHeight = newHeight;
+                encoder.BitmapTransform.InterpolationMode = BitmapInterpolationMode.Linear;
+
+                var pixelData = await decoder.GetPixelDataAsync(
+                    BitmapPixelFormat.Bgra8,
+                    BitmapAlphaMode.Premultiplied,
+                    new BitmapTransform(),
+                    ExifOrientationMode.RespectExifOrientation,
+                    ColorManagementMode.DoNotColorManage);
+
+                encoder.SetPixelData(
+                    BitmapPixelFormat.Bgra8,
+                    BitmapAlphaMode.Premultiplied,
+                    newWidth,
+                    newHeight,
+                    decoder.DpiX,
+                    decoder.DpiY,
+                    pixelData.DetachPixelData());
+
+                await encoder.FlushAsync();
+            }
+
+            var fileInfo = new FileInfo(tempPath);
+            CurrentAttachment = new FileAttachment
+            {
+                FilePath = tempPath,
+                FileName = fileName,
+                FileType = ".png",
+                FileSize = fileInfo.Length,
+            };
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to handle image paste: {ex}");
+            ShowAttachmentError("Failed to attach image from clipboard");
+        }
+    }
+
+    #endregion
+
+    #region Model Selector
+
+    private void PopulateModelSelector()
+    {
+        if (ModelSelector.Flyout is not MenuFlyout flyout)
+            return;
+
+        flyout.Items.OfType<MenuFlyoutItem>()
+            .ToList().ForEach(item => item.Click -= ModelMenuItem_Click);
+        flyout.Items.Clear();
+
+        if (Models == null || Models.Count == 0)
+        {
+            var addModelItem = new MenuFlyoutItem
+            {
+                Text = "No models found",
+                Tag = new ModelRecord(NoModelsId, "Add Model", "Add Model")
+            };
+        }
+        else
+        {
+            foreach (var model in Models)
+            {
+                var item = new MenuFlyoutItem { Text = model.Name, Tag = model };
+                item.Click += ModelMenuItem_Click;
+                flyout.Items.Add(item);
+            }
+        }
+    }
+
+    private void ModelMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var record = (ModelRecord)((MenuFlyoutItem)sender).Tag;
+        SelectedModel = record;
+    }
+
+    #endregion
+
+    #region Dependency Property Callbacks
+
+    private static void OnIsStreamingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is ChatInputControl control)
+            control.SwitchStreaming((bool)e.NewValue);
+    }
+
+    private static void OnModelsSet(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not ChatInputControl control)
+            return;
+
+        control.PopulateModelSelector();
+
+        if (control.Models == null || control.Models.Count == 0)
+        {
+            control.SelectedModel = new ModelRecord(NoModelsId, "Select Model", "Select Model");
+        }
+        else if (control.SelectedModel == null || control.SelectedModel.Id == NoModelsId)
+        {
+            control.SelectedModel = control.Models[0];
+        }
+
+        control.Models.CollectionChanged -= control.Models_CollectionChanged;
+        control.Models.CollectionChanged += control.Models_CollectionChanged;
+    }
+
+    private static void OnSelectedModelSet(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not ChatInputControl control)
+            return;
+
+        if (e.NewValue is ModelRecord model)
+            control.ModelSelector.Content = model.Id == NoModelsId ? "Select Model..." : model.Name;
+        else
+            control.ModelSelector.Content = "Select Model...";
+
+        control.UpdateSendButtonState();
+    }
+
+    private void Models_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        PopulateModelSelector();
+
+        if (Models == null || Models.Count == 0)
+        {
+            SelectedModel = new ModelRecord(NoModelsId, "Select Model", "Select Model");
+        }
+        else if (SelectedModel == null || SelectedModel.Id == NoModelsId)
+        {
+            SelectedModel = Models[0];
+        }
+        else if (!string.IsNullOrEmpty(SelectedModel.Id) && !Models.Any(m => m.Id == SelectedModel.Id))
+        {
+            SelectedModel = Models[0];
+        }
+    }
+
+    #endregion
+
+    #region Private Helpers
+
+    private void DoMessageSend()
+    {
+        if (SelectedModel == null || SelectedModel.Id == NoModelsId)
+            return;
+
+        if (string.IsNullOrEmpty(Message) && CurrentAttachment == null)
+            return;
+
+        MessageSent?.Invoke(this, new MessageEventArgs
+        {
+            Message = Message.Trim(),
+            Model = SelectedModel.Id,
+            Attachment = CurrentAttachment
+        });
+
+        Message = string.Empty;
+        CurrentAttachment = null;
+    }
+
+    private void UpdateSendButtonState()
+    {
+        var hasText = !string.IsNullOrEmpty(MessageInput.Text);
+        var hasSelectedModel = SelectedModel != null && SelectedModel.Id != NoModelsId;
+        ButtonSend.IsEnabled = hasText && !IsStreaming && hasSelectedModel;
+    }
+
+    private void SwitchStreaming(bool isStreaming)
+    {
+        ButtonStop.Visibility = isStreaming ? Visibility.Visible : Visibility.Collapsed;
+        ButtonSend.Visibility = isStreaming ? Visibility.Collapsed : Visibility.Visible;
+
+        ButtonFile.IsEnabled = !isStreaming;
+        MessageInput.IsEnabled = !isStreaming;
+        ModelSelector.IsEnabled = !isStreaming;
+
+        UpdateSendButtonState();
+
+        if (!isStreaming)
+            MessageInput.Focus(FocusState.Programmatic);
     }
 
     private void UpdateFileButtonState()
@@ -279,392 +543,47 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
         }
         else
         {
-            // Set icon based on file type
             var icon = CurrentAttachment.FileType.ToLower() switch
             {
                 ".pdf" => "\uEA90",
                 ".doc" or ".docx" => "\uE8A5",
                 ".jpg" or ".png" or ".gif" => "\uE91B",
-                _ => "\uE8A5"  // default document icon
+                _ => "\uE8A5"
             };
 
             ButtonFile.Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Children =
-            {
-                new FontIcon { Glyph = icon, FontSize = 14 },
-                new TextBlock
                 {
-                    Text = CurrentAttachment.FileName,
-                    Margin = new Thickness(4,0,0,0),
-                    MaxWidth = 80,
-                    TextTrimming = TextTrimming.CharacterEllipsis
+                    new FontIcon { Glyph = icon, FontSize = 14 },
+                    new TextBlock
+                    {
+                        Text = CurrentAttachment.FileName,
+                        Margin = new Thickness(4, 0, 0, 0),
+                        MaxWidth = 80,
+                        TextTrimming = TextTrimming.CharacterEllipsis
+                    }
                 }
-            }
             };
 
             ToolTipService.SetToolTip(ButtonFile, $"{CurrentAttachment.FileName} ({CurrentAttachment.FileSize / 1024:N0} KB)");
         }
     }
 
-    #region DP
-    public bool IsStreaming
-    {
-        get => (bool)GetValue(IsStreamingProperty);
-        set => SetValue(IsStreamingProperty, value);
-    }
-
-    public static readonly DependencyProperty IsStreamingProperty =
-        DependencyProperty.Register(nameof(IsStreaming), typeof(bool), typeof(ChatInputControl),
-            new PropertyMetadata(false, OnIsStreamingChanged));
-
-    private static void OnIsStreamingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is ChatInputControl control)
-        {
-            control.SwitchStreaming((bool)e.NewValue);
-        }
-    }
-
-    public ObservableCollection<ModelRecord> Models
-    {
-        get { return (ObservableCollection<ModelRecord>)GetValue(ModelsProperty); }
-        set { SetValue(ModelsProperty, value); }
-    }
-
-    // Using a DependencyProperty as the backing store for Models.  This enables animation, styling, binding, etc...
-    public static readonly DependencyProperty ModelsProperty =
-        DependencyProperty.Register("Models", typeof(ObservableCollection<ModelRecord>), typeof(ChatInputControl), new PropertyMetadata(
-            new ObservableCollection<ModelRecord>(), OnModelsSet));
-
-    private static void OnModelsSet(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is ChatInputControl control)
-        {
-            control.PopulateModelSelector();
-
-            if (control.Models == null || control.Models.Count == 0)
-            {
-                // No models available - select placeholder
-                control.SelectedModel = new ModelRecord(NoModelsId, "Select Model", "Select Model");
-            }
-            else if (control.SelectedModel == null || control.SelectedModel.Id == NoModelsId)
-            {
-                // Models are available and either no model is selected or placeholder was selected
-                control.SelectedModel = control.Models[0];
-            }
-
-            control.Models.CollectionChanged -= control.Models_CollectionChanged;
-            control.Models.CollectionChanged += control.Models_CollectionChanged;
-        }
-    }
-
-    private void Models_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        PopulateModelSelector();
-        
-        // Handle model selection when collection changes
-        if (Models == null || Models.Count == 0)
-        {
-            // No models available - select placeholder
-            SelectedModel = new ModelRecord(NoModelsId, "Select Model", "Select Model");
-        }
-        else if (SelectedModel == null || SelectedModel.Id == NoModelsId)
-        {
-            // Models are available and either no model is selected or placeholder was selected
-            SelectedModel = Models[0];
-        }
-        else if (!string.IsNullOrEmpty(SelectedModel.Id) && !Models.Any(m => m.Id == SelectedModel.Id))
-        {
-            // The currently selected model was removed from the collection
-            SelectedModel = Models[0];
-        }
-    }
-
-    public ModelRecord SelectedModel
-    {
-        get { return (ModelRecord)GetValue(SelectedModelProperty); }
-        set { SetValue(SelectedModelProperty, value); }
-    }
-
-    public List<string>? AllowedFileExtensions
-    {
-        get => _allowedFileExtensions;
-        set
-        {
-            _allowedFileExtensions = value;
-            UpdateFileButtonState();
-        }
-    }
-
-    public bool ReadOnly { get; internal set; }
-
-    public static readonly DependencyProperty SelectedModelProperty =
-        DependencyProperty.Register("SelectedModel", typeof(ModelRecord), typeof(ChatInputControl),
-            new PropertyMetadata(default(ModelRecord), OnSelectedModelSet));
-
-    private static void OnSelectedModelSet(DependencyObject d, DependencyPropertyChangedEventArgs e)
-    {
-        if (d is ChatInputControl control)
-        {
-            if (e.NewValue is ModelRecord model)
-            {
-                if (model.Id == NoModelsId)
-                {
-                    control.ModelSelector.Content = "Select Model...";
-                }
-                else
-                {
-                    control.ModelSelector.Content = model.Name;
-                }
-            }
-            else
-            {
-                // No model selected - show placeholder
-                control.ModelSelector.Content = "Select Model...";
-            }
-
-            // Update button enabled state when model selection changes
-            control.UpdateSendButtonState();
-        }
-    }
-    #endregion
-
-    private void Dispose(bool disposing)
-    {
-        if (!disposedValue)
-        {
-            if (disposing)
-            {
-                // Dispose managed resources
-                Models.CollectionChanged -= Models_CollectionChanged;
-            }
-
-            disposedValue=true;
-        }
-    }
-
-    public void Dispose()
-    {
-        // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
-        Dispose(disposing: true);
-        GC.SuppressFinalize(this);
-    }
-
     private async Task<bool> ValidateFileAsync(StorageFile file)
     {
         var properties = await file.GetBasicPropertiesAsync();
-
-        // Example size limit of 50MB
         const long MAX_FILE_SIZE = 50 * 1024 * 1024;
 
         if (properties.Size > MAX_FILE_SIZE)
-        {
-            // Show error
             return false;
-        }
 
-        // Use FileTypesHelpers to check allowed file types
         var ext = file.FileType.ToLowerInvariant();
         if (!FileTypesHelpers.IsSupportedFileExtension(ext))
-        {
-            // Show error
             return false;
-        }
 
         return true;
-    }
-
-    private void MessageInput_DragOver(object sender, DragEventArgs e)
-    {
-        e.AcceptedOperation = DataPackageOperation.Copy;
-
-        // Show visual feedback if it's a file
-        //e.DragUIOverride.Caption = "Release to attach file";
-        e.DragUIOverride.IsContentVisible = true;
-        e.DragUIOverride.IsGlyphVisible = false;
-        e.DragUIOverride.IsCaptionVisible = false;
-    }
-
-    private async void MessageInput_Drop(object sender, DragEventArgs e)
-    {
-        DropOverlay.Visibility = Visibility.Collapsed;
-        if (e.DataView.Contains(StandardDataFormats.StorageItems))
-        {
-            var items = await e.DataView.GetStorageItemsAsync();
-            var file = items.FirstOrDefault() as StorageFile;
-
-            if (file != null && await ValidateFileAsync(file))
-            {
-                var properties = await file.GetBasicPropertiesAsync();
-
-                CurrentAttachment = new FileAttachment
-                {
-                    FilePath = file.Path,
-                    FileName = file.Name,
-                    FileType = file.FileType,
-                    FileSize = (long)properties.Size
-                };
-            }
-            else
-            {
-                ShowWarningRequested?.Invoke(this, new WarningEventArgs("Invalid file",
-                    "The file you are trying to attach is not supported or exceeds the size limit."));
-            }
-
-        }
-    }
-
-    private async void MessageInput_Paste(object sender, TextControlPasteEventArgs e)
-    {
-        var dataPackage = Clipboard.GetContent();
-        bool handled = false;
-
-        // First, check for files
-        if (dataPackage.Contains(StandardDataFormats.StorageItems))
-        {
-            handled = true;
-            await HandleStorageItemsPaste(dataPackage);
-        }
-        // Then check for images
-        else if (dataPackage.Contains(StandardDataFormats.Bitmap))
-        {
-            handled = true;
-            await HandleImagePaste(dataPackage);
-        }
-
-        if (handled)
-        {
-            e.Handled = true;
-        }
-    }
-
-    private async Task HandleStorageItemsPaste(DataPackageView dataPackage)
-    {
-        try
-        {
-            var items = await dataPackage.GetStorageItemsAsync();
-            if (items.Count > 0)
-            {
-                // For simplicity, just use the first file
-                var file = items[0] as StorageFile;
-                if (file != null)
-                {
-                    var properties = await file.GetBasicPropertiesAsync();
-
-                    CurrentAttachment = new FileAttachment
-                    {
-                        FilePath = file.Path,
-                        FileName = file.Name,
-                        FileType = file.FileType,
-                        FileSize = (long)properties.Size
-                    };
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Failed to handle file paste: {ex}");
-            ShowAttachmentError("Failed to attach file from clipboard");
-        }
-    }
-
-    private async Task HandleImagePaste(DataPackageView dataPackage)
-    {
-        try
-        {
-            var imageStream = await dataPackage.GetBitmapAsync();
-            if (imageStream != null)
-            {
-                // Generate unique filename in temp folder
-                string fileName = $"clipboard_image_{DateTime.Now:yyyyMMddHHmmss}.png";
-                string tempPath = Path.Combine(Path.GetTempPath(), fileName);
-
-                // Open the stream from clipboard
-                using var randomAccessStream = await imageStream.OpenReadAsync();
-                // Create decoder to read the image
-                var decoder = await BitmapDecoder.CreateAsync(randomAccessStream);
-
-                // Check dimensions
-                uint originalWidth = decoder.PixelWidth;
-                uint originalHeight = decoder.PixelHeight;
-
-                // Maximum dimensions allowed
-                const uint MAX_DIMENSION = 1568;
-
-                // Determine if resizing is needed and calculate new dimensions
-                uint newWidth = originalWidth;
-                uint newHeight = originalHeight;
-
-                if (originalWidth > MAX_DIMENSION || originalHeight > MAX_DIMENSION)
-                {
-                    if (originalWidth > originalHeight)
-                    {
-                        // Landscape
-                        newWidth = MAX_DIMENSION;
-                        newHeight = (uint)(originalHeight * (MAX_DIMENSION / (double)originalWidth));
-                    }
-                    else
-                    {
-                        // Portrait
-                        newHeight = MAX_DIMENSION;
-                        newWidth = (uint)(originalWidth * (MAX_DIMENSION / (double)originalHeight));
-                    }
-                }
-
-                // Create file using System.IO
-                using (var fileStream = new FileStream(tempPath, FileMode.Create))
-                {
-                    // Convert to Windows.Storage.Streams.IRandomAccessStream
-                    var outputStream = fileStream.AsRandomAccessStream();
-
-                    // Create encoder for output
-                    var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, outputStream);
-
-                    // Set the size
-                    encoder.BitmapTransform.ScaledWidth = newWidth;
-                    encoder.BitmapTransform.ScaledHeight = newHeight;
-                    encoder.BitmapTransform.InterpolationMode = BitmapInterpolationMode.Linear;
-
-                    // Get pixel data from decoder
-                    var pixelData = await decoder.GetPixelDataAsync(
-                        BitmapPixelFormat.Bgra8,
-                        BitmapAlphaMode.Premultiplied,
-                        new BitmapTransform(),
-                        ExifOrientationMode.RespectExifOrientation,
-                        ColorManagementMode.DoNotColorManage);
-
-                    // Set pixels to encoder
-                    encoder.SetPixelData(
-                        BitmapPixelFormat.Bgra8,
-                        BitmapAlphaMode.Premultiplied,
-                        newWidth,
-                        newHeight,
-                        decoder.DpiX,
-                        decoder.DpiY,
-                        pixelData.DetachPixelData());
-
-                    // Save the image
-                    await encoder.FlushAsync();
-                }
-
-                // Create attachment
-                var fileInfo = new FileInfo(tempPath);
-                CurrentAttachment = new FileAttachment
-                {
-                    FilePath = tempPath,
-                    FileName = fileName,
-                    FileType = ".png",
-                    FileSize = fileInfo.Length,
-                };
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Failed to handle image paste: {ex}");
-            ShowAttachmentError("Failed to attach image from clipboard");
-        }
     }
 
     private void ShowAttachmentError(string message)
@@ -672,16 +591,28 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
         ShowWarningRequested?.Invoke(this, new WarningEventArgs("Attachment Error", message));
     }
 
-    private void MessageInput_DragEnter(object sender, DragEventArgs e)
+    #endregion
+
+    #region IDisposable
+
+    private void Dispose(bool disposing)
     {
-        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        if (!_disposed)
         {
-            DropOverlay.Visibility = Visibility.Visible;
+            if (disposing)
+            {
+                Models.CollectionChanged -= Models_CollectionChanged;
+            }
+
+            _disposed = true;
         }
     }
 
-    private void MessageInput_DragLeave(object sender, DragEventArgs e)
+    public void Dispose()
     {
-        DropOverlay.Visibility = Visibility.Collapsed;
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
     }
+
+    #endregion
 }
