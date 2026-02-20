@@ -1,0 +1,147 @@
+<UserControl
+    x:Class="CopilotTaskbarApp.Controls.ChatInputControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:CopilotTaskbarApp.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Translation="0,0,6"
+    AllowDrop="True"
+    DragOver="MessageInput_DragOver"
+    DragEnter="MessageInput_DragEnter"
+    DragLeave="MessageInput_DragLeave"
+    Drop="MessageInput_Drop">
+
+    <Grid>
+        <RelativePanel
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            CornerRadius="{ThemeResource OverlayCornerRadius}"
+            HorizontalAlignment="{Binding HorizontalAlignment, RelativeSource={RelativeSource Mode=TemplatedParent}}"
+            VerticalAlignment="{Binding VerticalAlignment, RelativeSource={RelativeSource Mode=TemplatedParent}}"
+            Padding="12"
+            MinWidth="320">
+
+            <!-- Message input -->
+            <TextBox
+                x:Name="MessageInput"
+                RelativePanel.AlignTopWithPanel="True"
+                RelativePanel.AlignLeftWithPanel="True"
+                RelativePanel.LeftOf="ButtonFile"
+                PlaceholderText="Send a message..."
+                AcceptsReturn="True"
+                IsSpellCheckEnabled="True"
+                TextWrapping="Wrap"
+                Margin="0,0,0,4"
+                BorderThickness="0"
+                Background="{ThemeResource TextControlBackgroundFocused}"
+                MaxHeight="250"
+                ScrollViewer.VerticalScrollBarVisibility="Auto"
+                Text="{x:Bind Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                Paste="MessageInput_Paste"
+                TextChanged="MessageInput_TextChanged"
+                PreviewKeyDown="MessageInput_PreviewKeyDown">
+                <TextBox.Resources>
+                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{StaticResource SystemFillColorSolidNeutralBackground}" />
+                    <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                    <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
+                </TextBox.Resources>
+            </TextBox>
+
+            <!-- File attach button -->
+            <Button
+                x:Name="ButtonFile"
+                RelativePanel.AlignTopWithPanel="True"
+                RelativePanel.LeftOf="PanelSend"
+                BorderThickness="0"
+                Margin="8,0,0,0"
+                Background="Transparent"
+                Foreground="LightGray"
+                Height="32"
+                Click="ButtonFile_Click"
+                RightTapped="ButtonFile_RightTapped">
+                <FontIcon Glyph="&#xE8E5;" FontSize="14" />
+            </Button>
+
+            <!-- Send / Stop buttons -->
+            <StackPanel
+                x:Name="PanelSend"
+                RelativePanel.AlignTopWithPanel="True"
+                RelativePanel.AlignRightWithPanel="True"
+                Orientation="Horizontal">
+
+                <Button
+                    x:Name="ButtonStop"
+                    IsTabStop="False"
+                    Height="32"
+                    Visibility="Collapsed"
+                    Margin="8,0,0,0"
+                    Click="ButtonStop_Click">
+                    <Grid>
+                        <ProgressRing Height="20" Width="20" IsActive="True" />
+                        <FontIcon Glyph="&#xE71A;" FontSize="12" />
+                    </Grid>
+                </Button>
+
+                <Button
+                    x:Name="ButtonSend"
+                    Height="32"
+                    Margin="8,0,0,0"
+                    Click="ButtonSend_Click">
+                    <FontIcon Glyph="&#xE725;" FontSize="14" />
+                </Button>
+            </StackPanel>
+
+            <!-- Model selector -->
+            <DropDownButton
+                x:Name="ModelSelector"
+                Background="Transparent"
+                BorderThickness="0"
+                Content="Loading Models..."
+                RelativePanel.Below="MessageInput"
+                RelativePanel.AlignLeftWithPanel="True"
+                Margin="0,4,0,0"
+                FontSize="12">
+                <DropDownButton.Flyout>
+                    <MenuFlyout />
+                </DropDownButton.Flyout>
+            </DropDownButton>
+
+            <!-- Help text -->
+            <TextBlock
+                x:Name="HelpTextBlock"
+                Visibility="Collapsed"
+                RelativePanel.AlignRightWithPanel="True"
+                RelativePanel.AlignVerticalCenterWith="ModelSelector"
+                Margin="0,4,12,0"
+                TextAlignment="Center"
+                FontSize="12">
+                <Span>Use </Span>
+                <Span FontWeight="SemiBold">shift + return</Span>
+                <Span> for new line</Span>
+            </TextBlock>
+        </RelativePanel>
+
+        <!-- Drop indicator overlay -->
+        <Border
+            x:Name="DropOverlay"
+            Background="{ThemeResource SmokeFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource FocusStrokeColorOuterBrush}"
+            BorderThickness="2"
+            CornerRadius="{ThemeResource OverlayCornerRadius}"
+            Visibility="Collapsed">
+            <StackPanel
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="8">
+                <FontIcon
+                    Glyph="&#xE8E5;"
+                    FontSize="24"
+                    Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+                <TextBlock
+                    Text="Drop file to attach"
+                    Style="{ThemeResource BodyStrongTextBlockStyle}" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>
