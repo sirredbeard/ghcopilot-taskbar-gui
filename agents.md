@@ -34,7 +34,7 @@ Each time this project is revisited:
 ## Project-Specific Context
 
 This is a WinUI 3 desktop application that:
-- Uses the GitHub Copilot SDK (v0.1.24-preview.0) for chat functionality with 5-minute timeouts for complex operations
+- Uses the GitHub Copilot SDK (v0.1.32) for chat functionality with 5-minute timeouts for complex operations
 - Integrates with Windows taskbar via System.Windows.Forms.NotifyIcon
 - Detects active Windows Explorer folders and applications for context
 - Identifies WSL distributions when Windows Terminal shows Unix-style prompts
@@ -123,45 +123,50 @@ The application uses a comprehensive system prompt that instructs the model to:
 
 ## Type Safety Considerations
 
-### SDK Type System (v0.1.24)
+### SDK Type System (v0.1.32)
 
-The GitHub Copilot SDK v0.1.24-preview.0 uses internal types that are not fully exposed in the public API surface. This requires careful handling:
+The GitHub Copilot SDK v0.1.32 exposes strongly-typed public types. The old `dynamic` + `SendAndWaitAsync` pattern is no longer needed.
 
-**Current Approach:**
-- Use `dynamic` for SDK session and response handling
-- Apply pattern matching for null-safe access: `if (responseEvent?.Data?.Content is string content)`
-- Add inline comments explaining type trade-offs
-
-**Rationale:**
-- SDK's `SendAndWaitAsync` returns internal `AssistantMessageEvent?` type
-- Session types are not publicly exposed in v0.1.24
-- `dynamic` provides flexibility for SDK evolution between versions
-- Pattern matching (`is` operator) enables type-safe extraction while working with dynamic
+**Current Approach (event-based API):**
+- `CreateSessionAsync` returns `CopilotSession` (strongly typed)
+- Use `session.On(handler)` to subscribe to events
+- `SendAsync` returns message ID; response comes via `AssistantMessageEvent`
+- `SessionIdleEvent` signals completion; `SessionErrorEvent` signals errors
+- Use `TaskCompletionSource` to bridge event-based pattern to async/await
 
 **Best Practices:**
 ```csharp
-// Good: Pattern matching for type-safe null checks
-if (responseEvent?.Data?.Content is string content)
+await using var session = await client.CreateSessionAsync(new SessionConfig { Model = "gpt-4" });
+var done = new TaskCompletionSource<string>();
+var responseContent = "";
+
+using var subscription = session.On(evt =>
 {
-    return content;
-}
+    switch (evt)
+    {
+        case AssistantMessageEvent msg:
+            responseContent = msg.Data.Content ?? "";
+            break;
+        case SessionIdleEvent:
+            done.TrySetResult(responseContent);
+            break;
+        case SessionErrorEvent err:
+            done.TrySetException(new Exception(err.Data.Message));
+            break;
+    }
+});
 
-// Avoid: Direct access without null safety
-string content = responseEvent.Data.Content; // Nullable warning
-
-// Avoid: Excessive null-forgiving operators
-string content = responseEvent!.Data!.Content!; // Fragile
+await session.SendAsync(new MessageOptions { Prompt = "Hello" });
+var result = await done.Task;
 ```
 
-**Future Improvements:**
-When SDK exposes public types (likely v0.2.x+), migrate to:
-```csharp
-AssistantMessageEvent? responseEvent = await session.SendAndWaitAsync(...);
-if (responseEvent?.Data?.Content is string content)
-{
-    return content;
-}
-```
+**Key changes from v0.1.24:**
+- `SendAndWaitAsync` removed — use `SendAsync` + event handlers
+- `dynamic` no longer needed — all types are public
+- Permission handler can be provided via session config
+- `PermissionRequestResultKind` is strongly typed (v0.1.31+)
+- `session.SetModelAsync()` available for mid-session model switching (v0.1.30+)
+- Backward compatibility with v2 CLI servers (v0.1.32)
 
 ## Debugging
 
@@ -200,13 +205,6 @@ When timeout occurs, logs show:
 [CopilotService] <model response>
 [CopilotService] ===== END RESPONSE =====
 ```
-
-### Launch Configuration
-
-`.vscode/launch.json` is configured for ARM64 debugging with:
-- Pre-launch build task
-- Internal console with auto-open
-- `justMyCode: false` for SDK debugging
 
 ## Known Issues
 
@@ -258,22 +256,23 @@ private async void InputBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBox
 **Issue**: SDK versions may require specific CLI versions.
 **Resolution**: The SDK now bundles the correct CLI version, reducing compatibility issues.
 
-**Monitoring**: Debug logs will show if CLI startup or session creation fails
+**Monitoring**: Debug logs will show if CLI startup or session creation fails.
 
 ## UI Design Principles
 
 ### Typography
 
-All UI elements use **Segoe UI** font family with standardized sizes for Windows 11 native appearance:
+WinUI 3 XAML controls use **Segoe UI** (via `ContentControlThemeFontFamily`) with standardized sizes for Windows 11 native appearance. The WinForms-based `Win11ContextMenu` still uses **Segoe UI Variable Text** at 9pt, which is appropriate for that Win32 surface and does not affect WinUI 3 cursor rendering.
 
-- **Standard content**: 16pt (chat messages, input box)
-- **Secondary text**: 13pt (timestamps, metadata)
-- **Headers**: 16pt (message sender names)
-- **Icons**: 16pt (buttons, interface elements)
+- **Standard content**: 18px (chat messages, input box — `FontSize="18"`)
+- **Secondary text**: 13px (timestamps, metadata, copy button icons — `CaptionTextBlockStyle`)
+- **Speaker labels / headers**: 18–19px SemiBold (`FlyoutSpeakerTextStyle`, `FlyoutHeaderTextStyle`)
+- **Tray menu (XAML)**: `ControlContentThemeFontSize` / `BodyTextBlockStyle` (system-scaled, no hardcoded sizes)
+- **Tray menu (WinForms)**: Segoe UI Variable Text 9pt
 
-**Text Scaling**: WinUI 3 automatically respects Windows text scaling settings (Settings → Accessibility → Text size). Font sizes are base values that scale with user preferences.
+**Text Scaling**: WinUI 3 automatically respects Windows text scaling settings (Settings → Accessibility → Text size). The tray menu uses `ControlContentThemeFontSize` ThemeResource which auto-scales with accessibility settings. Chat content uses a fixed 18px for comfortable reading.
 
-**Previous Variation Fonts Removed**: The application originally used "Segoe UI Variable Display" and "Segoe UI Variable Text" which contributed to the TextBox cursor spacing bug. Plain "Segoe UI" provides better consistency and avoids rendering issues.
+**Font Family Notes**: "Segoe UI Variable Display" and "Segoe UI Variable Text" were removed from XAML/WinUI 3 controls because they contributed to the TextBox cursor spacing bug. Plain "Segoe UI" (via `ContentControlThemeFontFamily`) is used for all WinUI 3 controls. `Win11ContextMenu.cs` intentionally retains "Segoe UI Variable Text" for the WinForms ContextMenuStrip, where the variable font renders correctly.
 
 ### Input Control
 

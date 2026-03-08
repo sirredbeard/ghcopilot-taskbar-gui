@@ -97,6 +97,8 @@ public class ChatMessage : INotifyPropertyChanged
                 OnPropertyChanged(nameof(ImageVisibility));
                 OnPropertyChanged(nameof(GlyphVisibility));
                 OnPropertyChanged(nameof(ImageVisibilityFixed));
+                OnPropertyChanged(nameof(UserAvatarVisibility));
+                OnPropertyChanged(nameof(InitialVisibility));
             }
         }
     }
@@ -110,11 +112,48 @@ public class ChatMessage : INotifyPropertyChanged
     
     public bool IsAssistantMessage => Role == "assistant";
 
+    public Visibility CopyButtonVisibility => IsAssistantMessage ? Visibility.Visible : Visibility.Collapsed;
+
+    private bool _isThinking;
+    public bool IsThinking
+    {
+        get => _isThinking;
+        set
+        {
+            if (_isThinking != value)
+            {
+                _isThinking = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ThinkingVisibility));
+                OnPropertyChanged(nameof(ContentVisibility));
+            }
+        }
+    }
+
+    public Visibility ThinkingVisibility => IsThinking ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ContentVisibility => IsThinking ? Visibility.Collapsed : Visibility.Visible;
+
+    private Visibility _timestampVisibility = Visibility.Collapsed;
+    public Visibility TimestampVisibility
+    {
+        get => _timestampVisibility;
+        set
+        {
+            if (_timestampVisibility != value)
+            {
+                _timestampVisibility = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     public string FormattedTime => Timestamp.ToString("g");
 
     public string UserInitial => !string.IsNullOrEmpty(UserName) ? UserName.Substring(0, 1).ToUpper() : "U";
     
-    public Visibility InitialVisibility => IsUserMessage ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility InitialVisibility => IsUserMessage && !HasImage ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility UserAvatarVisibility => IsUserMessage && HasImage ? Visibility.Visible : Visibility.Collapsed;
     
     public Visibility ImageVisibilityFixed => !IsUserMessage && HasImage ? Visibility.Visible : Visibility.Collapsed;
 }

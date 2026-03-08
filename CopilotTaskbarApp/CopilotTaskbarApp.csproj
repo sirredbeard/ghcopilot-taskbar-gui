@@ -19,6 +19,8 @@
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>partial</TrimMode>
     <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
   </PropertyGroup>
 
   <!-- .NET 10 configurations: override TFM and disable trimming -->
@@ -33,7 +35,7 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.Markdown" Version="7.1.2" />
-    <PackageReference Include="GitHub.Copilot.SDK" Version="0.1.24-preview.0" />
+    <PackageReference Include="GitHub.Copilot.SDK" Version="0.1.32" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.269">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -41,6 +43,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260209005" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.3" />
+
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
   </ItemGroup>
 
   <ItemGroup>

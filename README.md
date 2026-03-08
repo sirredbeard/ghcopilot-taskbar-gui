@@ -23,7 +23,7 @@
 - **Smart Command Execution**: Imperative commands executed immediately with partial progress reporting
 - **"Thinking..." Indicator**: Visual feedback while processing requests
 - **Chat Persistence**: SQLite storage for message history
-- **GitHub Copilot SDK**: Direct integration with Copilot CLI (v0.1.24-preview, 5-minute timeout for complex operations)
+- **GitHub Copilot SDK**: Direct integration with Copilot CLI (v0.1.32, 5-minute timeout for complex operations)
 
 ## Prerequisites
 
@@ -84,7 +84,7 @@ Run `CopilotTaskbarApp.exe`. Application icon appears in system tray. Click to o
 
 - .NET 11 Preview (Partial trimming enabled, full AOT incompatible with WinUI 3 data binding)
 - WinUI 3 with Windows App SDK
-- GitHub Copilot SDK v0.1.24-preview (JSON-RPC over stdio)
+- GitHub Copilot SDK v0.1.32 (JSON-RPC over stdio)
 - System.Windows.Forms.NotifyIcon (official Microsoft API)
 - Windows Accessibility API (UI Automation fallback)
 - SQLite for persistence
@@ -220,7 +220,7 @@ Output: `bin\Release\net11.0-windows10.0.19041.0\{runtime}\publish\`
 
 **Key Dependencies**:
 - `Microsoft.WindowsAppSDK` - WinUI 3 framework
-- `GitHub.Copilot.SDK` v0.1.24-preview.0 - Copilot integration
+- `GitHub.Copilot.SDK` v0.1.32 - Copilot integration
 - `Microsoft.Data.Sqlite` - Persistence
 - `CommunityToolkit.WinUI.UI.Controls.Markdown` - Message rendering
 - Framework references: WindowsForms (NotifyIcon), WPF (UI Automation)

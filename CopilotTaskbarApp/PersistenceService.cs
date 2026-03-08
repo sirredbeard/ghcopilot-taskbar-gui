@@ -24,7 +24,7 @@ public class PersistenceService
     private async Task InitializeDatabase()
     {
         using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync();
+        await connection.OpenAsync().ConfigureAwait(false);
 
         var createTableCmd = connection.CreateCommand();
         createTableCmd.CommandText = @"
@@ -36,13 +36,13 @@ public class PersistenceService
                 context TEXT
             )";
         
-        await createTableCmd.ExecuteNonQueryAsync();
+        await createTableCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     public async Task SaveMessageAsync(ChatMessage message)
     {
         using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync();
+        await connection.OpenAsync().ConfigureAwait(false);
 
         var insertCmd = connection.CreateCommand();
         insertCmd.CommandText = @"
@@ -54,7 +54,7 @@ public class PersistenceService
         insertCmd.Parameters.AddWithValue("$timestamp", message.Timestamp.ToString("o"));
         insertCmd.Parameters.AddWithValue("$context", message.Context ?? (object)DBNull.Value);
         
-        await insertCmd.ExecuteNonQueryAsync();
+        await insertCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     public async Task<List<ChatMessage>> LoadMessagesAsync(int limit = 100)
@@ -62,7 +62,7 @@ public class PersistenceService
         var messages = new List<ChatMessage>();
 
         using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync();
+        await connection.OpenAsync().ConfigureAwait(false);
 
         var selectCmd = connection.CreateCommand();
         selectCmd.CommandText = @"
@@ -73,9 +73,9 @@ public class PersistenceService
         
         selectCmd.Parameters.AddWithValue("$limit", limit);
 
-        using var reader = await selectCmd.ExecuteReaderAsync();
+        using var reader = await selectCmd.ExecuteReaderAsync().ConfigureAwait(false);
         
-        while (await reader.ReadAsync())
+        while (await reader.ReadAsync().ConfigureAwait(false))
         {
             messages.Add(new ChatMessage
             {
@@ -94,11 +94,11 @@ public class PersistenceService
     public async Task ClearHistoryAsync()
     {
         using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync();
+        await connection.OpenAsync().ConfigureAwait(false);
 
         var deleteCmd = connection.CreateCommand();
         deleteCmd.CommandText = "DELETE FROM messages";
         
-        await deleteCmd.ExecuteNonQueryAsync();
+        await deleteCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 }
