@@ -1,13 +1,18 @@
-using CopilotTaskbarApp.Controls;
-using CopilotTaskbarApp.Controls.ChatInput;
-using CopilotTaskbarApp.Native;
-using CopilotTaskbarApp.Native.Efficiency;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Text;
+using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using Windows.Storage.Pickers;
+using System.Drawing;
+using System.IO;
+using System.Threading.Tasks;
+using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text.RegularExpressions;
+using WinForms = System.Windows.Forms;
 
 namespace CopilotTaskbarApp;
 
@@ -17,13 +22,11 @@ public sealed partial class MainWindow : Window
     private readonly CopilotService _copilotService;
     private readonly ContextService _contextService;
     private readonly PersistenceService _persistenceService;
-
-    private NativeWindow? _nativeWindow;
-    private WindowTrayHandler? _windowTrayHandler;
-    private bool _isAlwaysOnTop;
-
+    private WinForms.NotifyIcon? _notifyIcon;
+    
     // Avatar images
     private string? _userDisplayName;
+    private string? _userAvatarPath;
     private string _copilotAvatarPath = "Assets/copilot-logo.png";
 
     // Command history for up/down arrow navigation
@@ -31,17 +34,20 @@ public sealed partial class MainWindow : Window
     private int _historyIndex = -1;
     private string _currentInput = "";
     
-    private readonly Microsoft.UI.Windowing.AppWindow _appWindow;
+    private Microsoft.UI.Windowing.AppWindow _appWindow;
     private bool _isExiting = false;
-
-    private CancellationTokenSource? _streamingCts;
-
-    public bool IsStreaming { get; set; }
 
     public MainWindow()
     {
         InitializeComponent();
-
+        
+        // Ensure WinForms high DPI mode is set for the tray icon context menu
+        try 
+        {
+            WinForms.Application.SetHighDpiMode(WinForms.HighDpiMode.PerMonitorV2);
+        }
+        catch { /* Might fail if already set, which is fine */ }
+        
         // Get AppWindow immediately for event handling
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -133,6 +139,30 @@ public sealed partial class MainWindow : Window
                     }
                 }
                 catch { }
+
+                try
+                {
+                    var picStream = await currentUser.GetPictureAsync(Windows.System.UserPictureSize.Size64x64);
+                    if (picStream != null)
+                    {
+                        using var stream = await picStream.OpenReadAsync();
+                        if (stream.Size > 0)
+                        {
+                            var avatarDir = Path.Combine(AppContext.BaseDirectory, "Assets");
+                            Directory.CreateDirectory(avatarDir);
+                            var avatarPath = Path.Combine(avatarDir, "user-avatar.png");
+                            using var fileStream = File.Create(avatarPath);
+                            stream.AsStreamForRead().CopyTo(fileStream);
+                            _userAvatarPath = avatarPath;
+
+                            foreach (var msg in _messages.Where(m => m.IsUserMessage))
+                            {
+                                msg.AvatarImagePath = _userAvatarPath;
+                            }
+                        }
+                    }
+                }
+                catch { }
             }
         }
         catch { }
@@ -188,16 +218,16 @@ public sealed partial class MainWindow : Window
         var displayArea = Microsoft.UI.Windowing.DisplayArea.Primary;
         var workArea = displayArea.WorkArea;
         var outerBounds = displayArea.OuterBounds;
-
+        
         // 1/4 width, 1/2 height (2x taller)
         int width = workArea.Width / 4;
         int height = workArea.Height / 2; // 2x taller
-
+        
         // Add a small margin from the edges (12px) for better aesthetics
         int marginX = 12;
         int marginY = 12;
 
-        // Smart Detection: If WorkArea height is almost same as OuterBounds height,
+        // Smart Detection: If WorkArea height is almost same as OuterBounds height, 
         // it means Taskbar is Auto-Hidden (or not at bottom).
         // In this case, we need extra bottom margin to avoid being covered when Taskbar pops up.
         // Standard taskbar is ~48px.
@@ -213,116 +243,81 @@ public sealed partial class MainWindow : Window
         appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, width, height));
     }
 
-    private async void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
+    private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
         // Only initialize once
-        if (_nativeWindow == null && args.WindowActivationState != WindowActivationState.Deactivated)
+        if (_notifyIcon == null && args.WindowActivationState != WindowActivationState.Deactivated)
         {
             this.Activated -= MainWindow_Activated; // Unsubscribe
-            InitializeNativeWindowAndTrayIcon();
-
-            await SetupChatInputAsync();
+            InitializeTrayIcon();
         }
-    }
-
-    private async Task SetupChatInputAsync()
-    {
-        // fill models
-        chatInput.Models = await _copilotService.GetAvailableModelsAsync();
-
-        if (chatInput.Models.Any())
-        {
-            chatInput.SelectedModel = chatInput.Models.FirstOrDefault(m => m!.Id == "gpt-4.1") ?? chatInput.Models.First();
-        }
-
-        chatInput.AllowedFileExtensions = FileTypesHelpers.GetAllSupportedExtensions().ToList();
-
-        chatInput.MessageSent += ChatInput_MessageSent;
-        chatInput.FileSendRequested += ChatInput_FileSendRequested;
-        chatInput.RequestHistoryItem += ChatInput_RequestHistoryItem;
-        chatInput.StreamingStopRequested += ChatInput_StreamingStopRequested;
-
-    }
-
-    private void ChatInput_RequestHistoryItem(object? sender, int e)
-    {
-        NavigateHistory(e);
-    }
-
-    private async void ChatInput_FileSendRequested(object? sender, EventArgs e)
-    {
-        if (chatInput.CurrentAttachment != null)
-        {
-            // Clear current attachment if clicked again
-            chatInput.CurrentAttachment = null;
-            return;
-        }
-
-        FileOpenPicker openPicker = new()
-        {
-            ViewMode = PickerViewMode.List,
-            SuggestedStartLocation = PickerLocationId.DocumentsLibrary
-        };
-        openPicker.FileTypeFilter.Clear();
-
-        foreach (var ext in FileTypesHelpers.GetAllSupportedExtensions())
-        {
-            if (!openPicker.FileTypeFilter.Contains(ext))
-                openPicker.FileTypeFilter.Add(ext);
-        }
-
-        openPicker.FileTypeFilter.Add("*");
-
-        // Since we're in a Page, we need to obtain the parent Window.
-        // Replace this with your app-specific method of getting the Window handle.
-        var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        WinRT.Interop.InitializeWithWindow.Initialize(openPicker, hWnd);
-
-        var file = await openPicker.PickSingleFileAsync();
-
-        Debug.WriteLine(file != null ? $"Picked file: {file.Name}" : "Operation cancelled.");
-
-        if (file != null)
-        {
-            var properties = await file.GetBasicPropertiesAsync();
-
-            chatInput.CurrentAttachment = new FileAttachment(file.Path, file.Name, file.FileType, (long)properties.Size);
-        }
-
     }
 
     private void ShowMainWindow()
     {
-        EfficiencyModeUtilities.SetEfficiencyMode(false);
-        _nativeWindow?.BringToFront();
+        // Show and activate the window
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        ShowWindow(hwnd, SW_SHOW);
+        
+        // Force window to foreground
+        SetForegroundWindow(hwnd);
         this.Activate();
-
+        
         // Reposition to ensure it's in bottom right
         PositionWindowBottomRight();
-
+        
         // Ensure focus is on input box
-        chatInput.FocusInput();
+        InputBox.Focus(FocusState.Programmatic);
     }
 
     private void HideMainWindow()
     {
-        _nativeWindow?.Hide();
-        EfficiencyModeUtilities.SetEfficiencyMode(true);
+        // Hide the window but keep app running
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        ShowWindow(hwnd, SW_HIDE);
     }
 
-    private void ToggleWindowVisibility()
+    // Win32 API for hiding/showing window
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+    private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOSIZE = 0x0001;
+    
+    private const int SW_HIDE = 0;
+    private const int SW_SHOW = 5;
+
+    private bool _isAlwaysOnTop = false;
+
+    private void ShowWindow_Click(object sender, RoutedEventArgs e)
     {
-        if (_nativeWindow?.IsVisible() == true)
-            HideMainWindow();
-        else
-            ShowMainWindow();
+        this.Activate();
+    }
+
+    private void Exit_Click(object sender, RoutedEventArgs e)
+    {
+        _isExiting = true;
+        Application.Current.Exit();
     }
 
     private async void InitializeCopilot()
     {
         try
         {
-            chatInput.IsEnabled = false;
+            SendButton.IsEnabled = false;
+            InputBox.IsEnabled = false;
 
             // Copilot CLI is now bundled with the SDK, so we assume it is installed.
             // Directly check authentication.
@@ -337,10 +332,11 @@ public sealed partial class MainWindow : Window
                 Timestamp = DateTime.Now,
                 AvatarImagePath = _copilotAvatarPath
             };
-            _messages.Add(errorMessage);
+            AddMessage(errorMessage);
         }
 
-        chatInput.IsEnabled = true;
+        SendButton.IsEnabled = true;
+        InputBox.IsEnabled = true;
     }
 
     private async Task CheckAuthenticationAsync()
@@ -366,20 +362,12 @@ public sealed partial class MainWindow : Window
                     Timestamp = DateTime.Now,
                     AvatarImagePath = _copilotAvatarPath
                 };
-                _messages.Add(welcomeMessage);
+                AddMessage(welcomeMessage);
             }
             else
             {
-                var welcomeMessage = new ChatMessage
-                {
-                    Role = "system", // Change to system to hide copy button
-                    Content = "Connected to GitHub Copilot!",
-                    Timestamp = DateTime.Now,
-                    AvatarImagePath = _copilotAvatarPath
-                };
-                _messages.Add(welcomeMessage);
-                
-                chatInput.IsEnabled = true;
+                SendButton.IsEnabled = true;
+                InputBox.IsEnabled = true;
             }
         }
         catch (Exception ex)
@@ -391,72 +379,146 @@ public sealed partial class MainWindow : Window
                 Timestamp = DateTime.Now,
                 AvatarImagePath = _copilotAvatarPath
             };
-            _messages.Add(errorMessage);
+            AddMessage(errorMessage);
         }
     }
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _nativeWindow?.UnregisterHotKey();
-        _windowTrayHandler?.Dispose();
-        _nativeWindow?.Dispose();
+        _notifyIcon?.Dispose();
         await _copilotService.DisposeAsync();
     }
 
-    private void InitializeNativeWindowAndTrayIcon()
+    private TrayMenuWindow? _trayMenu;
+
+    private void InitializeTrayIcon()
     {
         try
         {
-            _nativeWindow = new NativeWindow(this);
+            _notifyIcon = new WinForms.NotifyIcon
+            {
+                Text = "GitHub Copilot Chat",
+                Visible = true
+            };
 
-            // setup icon for tray - try copilot-icon.ico first, fallback to github-mark.ico
             var baseDir = AppContext.BaseDirectory;
             var iconPath = Path.Combine(baseDir, "Assets", "copilot-icon.ico");
             if (!File.Exists(iconPath))
             {
                 iconPath = Path.Combine(baseDir, "Assets", "github-mark.ico");
             }
-
-            if (File.Exists(iconPath))
+            
+            if (File.Exists(iconPath) && new FileInfo(iconPath).Length > 0)
             {
-                _nativeWindow.SetupIcon(iconPath);
+                _notifyIcon.Icon = new Icon(iconPath);
+            }
+            else
+            {
+                var bmp = new System.Drawing.Bitmap(32, 32);
+                var g = System.Drawing.Graphics.FromImage(bmp);
+                g.Clear(System.Drawing.Color.Purple);
+                g.FillEllipse(System.Drawing.Brushes.White, 8, 8, 16, 16);
+                g.Dispose();
+                _notifyIcon.Icon = Icon.FromHandle(bmp.GetHicon());
             }
 
-            // Setup tray handler for context menu and click events
-            _windowTrayHandler = new WindowTrayHandler(this);
-            _windowTrayHandler.IsAlwaysOnTop = () => _isAlwaysOnTop;
-            _windowTrayHandler.MenuShowWindow += () => DispatcherQueue.TryEnqueue(() => ShowMainWindow());
-            _windowTrayHandler.MenuHideWindow += () => DispatcherQueue.TryEnqueue(() => HideMainWindow());
-            _windowTrayHandler.MenuToggleAlwaysOnTop += () =>
+            // Create WinUI 3 tray menu (native XAML, not WinForms)
+            _trayMenu = new TrayMenuWindow();
+            _trayMenu.ShowChatRequested += () => DispatcherQueue.TryEnqueue(ShowMainWindow);
+            _trayMenu.HideChatRequested += () => DispatcherQueue.TryEnqueue(HideMainWindow);
+            _trayMenu.AlwaysOnTopToggled += (isOn) => 
             {
-                _isAlwaysOnTop = !_isAlwaysOnTop;
-                _nativeWindow.SetAlwaysOnTop(_isAlwaysOnTop);
+                _isAlwaysOnTop = isOn;
+                DispatcherQueue.TryEnqueue(() => ToggleAlwaysOnTop(isOn));
             };
-            _windowTrayHandler.MenuCloseApplication += () => DispatcherQueue.TryEnqueue(() =>
+            _trayMenu.ShowTimestampsToggled += (show) =>
+            {
+                DispatcherQueue.TryEnqueue(() => ToggleTimestamps(show));
+            };
+            _trayMenu.ExitRequested += () => DispatcherQueue.TryEnqueue(() =>
             {
                 _isExiting = true;
+                _notifyIcon?.Dispose();
                 Application.Current.Exit();
             });
-            _windowTrayHandler.TrayIconMouseEventReceived += (mouseEvent) =>
+
+            // Empty ContextMenuStrip suppresses the default Win32 context menu on right-click
+            _notifyIcon.ContextMenuStrip = new WinForms.ContextMenuStrip();
+            _notifyIcon.ContextMenuStrip.Opening += (s, e) => e.Cancel = true;
+
+            _notifyIcon.MouseClick += (s, e) => 
             {
-                if (mouseEvent == MouseEvent.IconLeftMouseDown)
+                if (e.Button == WinForms.MouseButtons.Right)
                 {
-                    DispatcherQueue.TryEnqueue(() => ToggleWindowVisibility());
+                    DispatcherQueue.TryEnqueue(() => _trayMenu.ShowAtCursor());
+                    return;
                 }
-            };
+                
+                if (e.Button != WinForms.MouseButtons.Left)
+                    return;
 
-            // Set up global hotkey (Alt+G) to toggle window visibility
-            _windowTrayHandler.HotKeyEventReceived += () =>
-            {
-                DispatcherQueue.TryEnqueue(() => ToggleWindowVisibility());
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                    if (IsWindowVisible(hwnd))
+                        HideMainWindow();
+                    else
+                        ShowMainWindow();
+                });
             };
-
-            // Register Alt+G global hotkey
-            _nativeWindow.RegisterHotKey(
-                Windows.Win32.UI.Input.KeyboardAndMouse.HOT_KEY_MODIFIERS.MOD_ALT,
-                Windows.System.VirtualKey.G);
         }
         catch { }
+    }
+
+    private void ToggleAlwaysOnTop(bool enable)
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        SetWindowPos(hwnd, enable ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+
+    private void ToggleTimestamps(bool show)
+    {
+        var visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var msg in _messages)
+            msg.TimestampVisibility = visibility;
+        _showTimestamps = show;
+    }
+
+    private bool _showTimestamps = false;
+
+    private void AddMessage(ChatMessage msg)
+    {
+        if (_showTimestamps) msg.TimestampVisibility = Visibility.Visible;
+        _messages.Add(msg);
+    }
+
+    private void InsertMessage(int index, ChatMessage msg)
+    {
+        if (_showTimestamps) msg.TimestampVisibility = Visibility.Visible;
+        _messages.Insert(index, msg);
+    }
+
+    private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        // Enter key sends message
+        if (e.Key == Windows.System.VirtualKey.Enter && 
+            !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+        {
+            e.Handled = true;
+            SendButton_Click(sender, null!);
+        }
+        // Up arrow - navigate to previous command
+        else if (e.Key == Windows.System.VirtualKey.Up)
+        {
+            e.Handled = true;
+            NavigateHistory(-1);
+        }
+        // Down arrow - navigate to next command
+        else if (e.Key == Windows.System.VirtualKey.Down)
+        {
+            e.Handled = true;
+            NavigateHistory(1);
+        }
     }
 
     private void NavigateHistory(int direction)
@@ -470,7 +532,7 @@ public sealed partial class MainWindow : Window
             {
                 if (direction == -1)
                 {
-                     _currentInput = chatInput.Message ?? "";
+                     _currentInput = InputBox.Text ?? "";
                      _historyIndex = _commandHistory.Count - 1;
                 }
                 else
@@ -478,7 +540,7 @@ public sealed partial class MainWindow : Window
                     return;
                 }
             }
-            else          
+            else
             {
                 int newIndex = _historyIndex + direction;
 
@@ -489,7 +551,7 @@ public sealed partial class MainWindow : Window
                 else if (newIndex >= _commandHistory.Count)
                 {
                     _historyIndex = -1;
-                    chatInput.Message = _currentInput;
+                    InputBox.Text = _currentInput;
                     return;
                 }
                 
@@ -498,7 +560,7 @@ public sealed partial class MainWindow : Window
 
             if (_historyIndex >= 0 && _historyIndex < _commandHistory.Count)
             {
-                chatInput.Message = _commandHistory[_historyIndex];
+                InputBox.Text = _commandHistory[_historyIndex];
             }
         }
         catch
@@ -507,32 +569,36 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ChatInput_StreamingStopRequested(object? sender, EventArgs e)
+    private void InputBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
-        _streamingCts?.Cancel();
+        // Required event handler for AutoSuggestBox (no autocomplete needed)
     }
 
-    private async void ChatInput_MessageSent(object? sender, MessageEventArgs e)
+    private async void InputBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
     {
-        await SendMessageAsync(e.Message, e.Model, e.Attachment?.FilePath);
+        // Handle Enter key press
+        await SendMessageAsync();
     }
 
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "CopilotService.GetResponseAsync uses dynamic for SDK internal types. This is isolated and documented.")]
-    private async Task SendMessageAsync(string input, string model, string? attachment)
+    private async void SendButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SendMessageAsync();
+    }
+
+    private async Task SendMessageAsync()
     {
         try 
-        {            
-            if (string.IsNullOrEmpty(input))
+        {
+            var input = InputBox.Text?.Trim();
+            
+            if (string.IsNullOrEmpty(input)) 
                 return;
-
-            _streamingCts?.Dispose();
-            _streamingCts = new CancellationTokenSource();
-
-            chatInput.IsStreaming = true;
 
             _commandHistory.Add(input);
             _historyIndex = -1;
             _currentInput = "";
+
+            InputBox.Text = string.Empty;
 
             var userMessage = new ChatMessage
             {
@@ -540,22 +606,25 @@ public sealed partial class MainWindow : Window
                 Content = input,
                 Timestamp = DateTime.Now,
                 Context = null,
-                AvatarImagePath = null,
+                AvatarImagePath = _userAvatarPath,
                 UserName = _userDisplayName
             };
-            _messages.Add(userMessage);
+            AddMessage(userMessage);
             await _persistenceService.SaveMessageAsync(userMessage);
 
             var thinkingMessage = new ChatMessage
             {
                 Role = "assistant",
-                Content = "Thinking...",
+                Content = "",
+                IsThinking = true,
                 Timestamp = DateTime.Now,
                 AvatarImagePath = _copilotAvatarPath
             };
-            _messages.Add(thinkingMessage);
+            AddMessage(thinkingMessage);
 
             DispatcherQueue.TryEnqueue(() => ScrollToBottom());
+            
+            SendButton.IsEnabled = true;
             
             var (currentContext, screenshot) = await _contextService.GetContextAsync();
             userMessage.Context = currentContext;
@@ -566,18 +635,13 @@ public sealed partial class MainWindow : Window
                     ? _messages.Take(_messages.Count - 2).ToList() 
                     : null;
                 
-                var responseTask = _copilotService.GetResponseAsync(input, model, currentContext,
-                    screenshot, attachment, recentMessages, _streamingCts.Token);
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(300), _streamingCts.Token);
+                var responseTask = _copilotService.GetResponseAsync(input, currentContext, screenshot, recentMessages);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(300));
                 
                 var completedTask = await Task.WhenAny(responseTask, timeoutTask);
                 
                 string response;
-                if (_streamingCts.IsCancellationRequested)
-                {
-                    response = "Request cancelled.";
-                }
-                else if (completedTask == timeoutTask)
+                if (completedTask == timeoutTask)
                 {
                     response = "Request timed out after 5 minutes. For complex multi-step operations, try breaking them into separate requests.";
                 }
@@ -587,15 +651,13 @@ public sealed partial class MainWindow : Window
                     {
                         response = await responseTask;
                     }
-                    catch (OperationCanceledException)
-                    {
-                        response = "Request cancelled.";
-                    }
                     catch (Exception responseEx)
                     {
                         response = $"Error getting response: {responseEx.Message}\n\nStack trace:\n{responseEx.StackTrace}";
                     }
                 }
+
+                response = NormalizeAssistantResponse(response);
 
                 var tcs = new System.Threading.Tasks.TaskCompletionSource();
                 var uiUpdateSuccess = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High, () => 
@@ -616,7 +678,7 @@ public sealed partial class MainWindow : Window
                                 AvatarImagePath = _copilotAvatarPath
                             };
                             
-                            _messages.Insert(thinkingIndex, responseMessage);
+                            InsertMessage(thinkingIndex, responseMessage);
                             _ = _persistenceService.SaveMessageAsync(responseMessage);
                         }
                         
@@ -638,6 +700,7 @@ public sealed partial class MainWindow : Window
             {
                 DispatcherQueue.TryEnqueue(() => 
                 {
+                    thinkingMessage.IsThinking = false;
                     thinkingMessage.Role = "system";
                     thinkingMessage.Content = $"Error: {ex.Message}";
                     thinkingMessage.Timestamp = DateTime.Now;
@@ -646,8 +709,7 @@ public sealed partial class MainWindow : Window
             }
             finally
             {
-                chatInput.IsStreaming = false;
-                chatInput.FocusInput();
+                InputBox.Focus(FocusState.Programmatic);
                 await Task.Delay(100);
                 ScrollToBottom();
             }
@@ -665,8 +727,8 @@ public sealed partial class MainWindow : Window
                     Content = $"CRITICAL ERROR: {criticalEx.Message}\nSee {tempPath} for details.",
                     Timestamp = DateTime.Now
                 };
-                _messages.Add(errorMessage);
-                chatInput.IsEnabled = true;
+                AddMessage(errorMessage);
+                SendButton.IsEnabled = true;
             });
         }
     }
@@ -690,5 +752,100 @@ public sealed partial class MainWindow : Window
              // Optional: Show a small tooltip or visual feedback?
              // For now, the action is immediate.
         }
+    }
+
+    private void MessageContentRichText_Loaded(object sender, RoutedEventArgs e)
+    {
+        RenderRichTextContent(sender as RichTextBlock);
+    }
+
+    private void MessageContentRichText_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        RenderRichTextContent(sender as RichTextBlock);
+    }
+
+    private static void RenderRichTextContent(RichTextBlock? richText)
+    {
+        if (richText is null || richText.DataContext is not ChatMessage message)
+        {
+            return;
+        }
+
+        var text = NormalizeAssistantResponse(message.Content);
+        richText.Blocks.Clear();
+
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            var paragraph = new Paragraph();
+            AddMarkdownInlines(paragraph, line);
+            richText.Blocks.Add(paragraph);
+        }
+    }
+
+    // Group 1 = bold (**text**), Group 2 = italic (*text*)
+    [GeneratedRegex(@"\*\*(.+?)\*\*|\*(.+?)\*")]
+    private static partial Regex MarkdownInlineRegex();
+
+    private static void AddMarkdownInlines(Paragraph paragraph, string line)
+    {
+        if (line.Length == 0)
+        {
+            paragraph.Inlines.Add(new Run { Text = string.Empty });
+            return;
+        }
+
+        int start = 0;
+        foreach (Match match in MarkdownInlineRegex().Matches(line))
+        {
+            if (match.Index > start)
+            {
+                paragraph.Inlines.Add(new Run { Text = line[start..match.Index] });
+            }
+
+            if (match.Groups[1].Success)
+            {
+                paragraph.Inlines.Add(new Run
+                {
+                    Text = match.Groups[1].Value,
+                    FontWeight = FontWeights.SemiBold
+                });
+            }
+            else
+            {
+                paragraph.Inlines.Add(new Run
+                {
+                    Text = match.Groups[2].Value,
+                    FontStyle = Windows.UI.Text.FontStyle.Italic
+                });
+            }
+
+            start = match.Index + match.Length;
+        }
+
+        if (start < line.Length)
+        {
+            paragraph.Inlines.Add(new Run { Text = line[start..] });
+        }
+    }
+
+    private static string NormalizeAssistantResponse(string? response)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            return string.Empty;
+        }
+
+        // Remove leading whitespace/newlines that create an apparent visual gap under the role label.
+        var normalized = response.TrimStart();
+
+        // Collapse excessive blank lines while preserving intentional paragraph breaks.
+        normalized = Regex.Replace(normalized, "\\r?\\n{3,}", "\n\n");
+
+        return normalized;
     }
 }

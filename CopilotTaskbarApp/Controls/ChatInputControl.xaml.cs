@@ -426,8 +426,8 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
             control.SelectedModel = control.Models[0];
         }
 
-        control.Models.CollectionChanged -= control.Models_CollectionChanged;
-        control.Models.CollectionChanged += control.Models_CollectionChanged;
+        control.Models?.CollectionChanged -= control.Models_CollectionChanged;
+        control.Models?.CollectionChanged += control.Models_CollectionChanged;
     }
 
     private static void OnSelectedModelSet(DependencyObject d, DependencyPropertyChangedEventArgs e)
