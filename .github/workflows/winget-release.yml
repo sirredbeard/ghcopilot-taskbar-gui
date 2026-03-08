@@ -1,0 +1,125 @@
+name: Publish to WinGet
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+      version:
+        description: "Version string without v prefix (e.g. 0.1.0)"
+        required: true
+        type: string
+    secrets:
+      WINGET_PAT:
+        required: true
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          "version=${{ inputs.version }}" >> $env:GITHUB_OUTPUT
+          "tag=${{ inputs.tag }}" >> $env:GITHUB_OUTPUT
+
+      - name: Download release assets
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $baseUrl = "https://github.com/${{ github.repository }}/releases/download/$tag"
+          Invoke-WebRequest "$baseUrl/CopilotTaskbarApp-$version-win-x64.exe" -OutFile x64.exe
+          Invoke-WebRequest "$baseUrl/CopilotTaskbarApp-$version-win-arm64.exe" -OutFile arm64.exe
+
+      - name: Compute SHA256 hashes
+        id: hash
+        shell: pwsh
+        run: |
+          $x64Hash = (Get-FileHash x64.exe -Algorithm SHA256).Hash
+          $arm64Hash = (Get-FileHash arm64.exe -Algorithm SHA256).Hash
+          "x64=$x64Hash" >> $env:GITHUB_OUTPUT
+          "arm64=$arm64Hash" >> $env:GITHUB_OUTPUT
+
+      - name: Create winget manifest
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+          $baseUrl = "https://github.com/${{ github.repository }}/releases/download/$tag"
+          $dir = "manifests/s/sirredbeard/CopilotTaskbarApp/$version"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+
+          # Version manifest
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json
+          PackageIdentifier: sirredbeard.CopilotTaskbarApp
+          PackageVersion: $version
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.9.0
+          "@ -replace '(?m)^          ', '' | Set-Content "$dir/sirredbeard.CopilotTaskbarApp.yaml" -NoNewline
+
+          # Default locale manifest
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+          PackageIdentifier: sirredbeard.CopilotTaskbarApp
+          PackageVersion: $version
+          PackageLocale: en-US
+          Publisher: sirredbeard
+          PublisherUrl: https://github.com/sirredbeard
+          PackageName: Copilot Taskbar
+          PackageUrl: https://github.com/${{ github.repository }}
+          License: MIT
+          LicenseUrl: https://github.com/${{ github.repository }}/blob/main/LICENSE
+          ShortDescription: System tray access to GitHub Copilot with automatic context awareness
+          Tags:
+            - copilot
+            - github
+            - ai
+            - developer-tools
+          ManifestType: defaultLocale
+          ManifestVersion: 1.9.0
+          "@ -replace '(?m)^          ', '' | Set-Content "$dir/sirredbeard.CopilotTaskbarApp.locale.en-US.yaml" -NoNewline
+
+          # Installer manifest
+          @"
+          # yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+          PackageIdentifier: sirredbeard.CopilotTaskbarApp
+          PackageVersion: $version
+          MinimumOSVersion: 10.0.17763.0
+          InstallerType: portable
+          Commands:
+            - copilot-taskbar
+          Installers:
+            - Architecture: x64
+              InstallerUrl: $baseUrl/CopilotTaskbarApp-$version-win-x64.exe
+              InstallerSha256: ${{ steps.hash.outputs.x64 }}
+            - Architecture: arm64
+              InstallerUrl: $baseUrl/CopilotTaskbarApp-$version-win-arm64.exe
+              InstallerSha256: ${{ steps.hash.outputs.arm64 }}
+          ManifestType: installer
+          ManifestVersion: 1.9.0
+          "@ -replace '(?m)^          ', '' | Set-Content "$dir/sirredbeard.CopilotTaskbarApp.installer.yaml" -NoNewline
+
+      - name: Download wingetcreate
+        shell: pwsh
+        run: |
+          $url = "https://github.com/microsoft/winget-create/releases/download/v1.10.3.0/wingetcreate.exe"
+          $expectedHash = "9F56BB326B852A699296E936C7B40DADFAF3CCFF01C8E84ECFF89871ECFF8E5C"
+          Invoke-WebRequest $url -OutFile wingetcreate.exe
+          $actualHash = (Get-FileHash wingetcreate.exe -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "wingetcreate.exe hash mismatch: expected $expectedHash, got $actualHash"
+          }
+
+      - name: Submit manifest
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $dir = "manifests/s/sirredbeard/CopilotTaskbarApp/$version"
+
+          .\wingetcreate.exe submit --token "${{ secrets.WINGET_PAT }}" "$dir"

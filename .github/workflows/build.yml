@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  pull_request:
+    branches: ["*"]
+  workflow_call:
+    inputs:
+      version:
+        description: "Version string (e.g. 0.1.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        platform: [x64, ARM64]
+        include:
+          - platform: x64
+            rid: win-x64
+          - platform: ARM64
+            rid: win-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 11 Preview
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "11.0.x"
+          dotnet-quality: "preview"
+
+      - name: Restore dependencies
+        run: dotnet restore CopilotTaskbarApp/CopilotTaskbarApp.csproj -r ${{ matrix.rid }} -p:Platform=${{ matrix.platform }}
+
+      - name: Build
+        run: dotnet build CopilotTaskbarApp/CopilotTaskbarApp.csproj -c Release -r ${{ matrix.rid }} -p:Platform=${{ matrix.platform }} --no-restore
+
+      - name: Publish
+        if: inputs.version != ''
+        run: dotnet publish CopilotTaskbarApp/CopilotTaskbarApp.csproj -c Release -r ${{ matrix.rid }} -p:Platform=${{ matrix.platform }} --no-restore -o publish/${{ matrix.rid }}
+
+      - name: Upload artifact
+        if: inputs.version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: CopilotTaskbarApp-${{ inputs.version }}-${{ matrix.rid }}
+          path: publish/${{ matrix.rid }}/CopilotTaskbarApp.exe
