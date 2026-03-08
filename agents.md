@@ -43,8 +43,11 @@ This is a WinUI 3 desktop application that:
 - Uses Windows Accessibility API (UI Automation) as fallback for enhanced context inference
 - Shows "Thinking..." placeholder while processing requests
 - Persists chat history in SQLite
+- Renders assistant responses with Markdown (CommunityToolkit.WinUI.UI.Controls.Markdown)
 - Targets .NET 11 Preview with partial trimming on ARM64 and x64
 - Full Native AOT disabled due to WinUI 3 incompatibility (data binding, XAML resources)
+- Includes Efficiency Mode utilities for process QoS and priority management
+- Has a prepared ChatInputControl with file attachment, drag-drop, model selection (not yet wired into MainWindow)
 
 ### Context Inference Strategy
 
@@ -99,6 +102,9 @@ The application infers user intent/questions/problems using a **tiered optimizat
 2. **Deployment**: Self-contained deployment required for unpackaged WinUI 3 applications
 3. **SDK Integration**: Direct usage of GitHub.Copilot.SDK NuGet package with JSON-RPC communication to bundled Copilot CLI
 4. **Authentication**: Authentication via GitHub CLI (`gh auth login`) required
+5. **Native Interop**: CsWin32 source generator for type-safe P/Invoke (NativeMethods.txt lists required Win32 APIs)
+6. **Window Subclassing**: WindowSubclassBase/WindowTrayHandler for WM_TRAYICON and WM_HOTKEY message routing
+7. **Efficiency Mode**: Process QoS level (Eco/Default/High) and priority management via SetProcessInformation
 
 ## System Prompt Guidelines
 
@@ -226,9 +232,9 @@ When timeout occurs, logs show:
 ```xaml
 <AutoSuggestBox x:Name="InputBox"
                 PlaceholderText="Ask GitHub Copilot..."
-                FontFamily="Segoe UI"
-                FontSize="16"
-                Padding="12,8,12,8"
+                FontFamily="{ThemeResource ContentControlThemeFontFamily}"
+                FontSize="18"
+                Padding="8,6,8,6"
                 QuerySubmitted="InputBox_QuerySubmitted"
                 TextChanged="InputBox_TextChanged"
                 KeyDown="InputBox_KeyDown"/>
@@ -264,9 +270,9 @@ private async void InputBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBox
 
 WinUI 3 XAML controls use **Segoe UI** (via `ContentControlThemeFontFamily`) with standardized sizes for Windows 11 native appearance. The WinForms-based `Win11ContextMenu` still uses **Segoe UI Variable Text** at 9pt, which is appropriate for that Win32 surface and does not affect WinUI 3 cursor rendering.
 
-- **Standard content**: 18px (chat messages, input box — `FontSize="18"`)
+- **Standard content**: 18px (chat messages, input box — `FontSize="18"`, `Padding="8,6,8,6"`)
 - **Secondary text**: 13px (timestamps, metadata, copy button icons — `CaptionTextBlockStyle`)
-- **Speaker labels / headers**: 18–19px SemiBold (`FlyoutSpeakerTextStyle`, `FlyoutHeaderTextStyle`)
+- **Speaker labels / headers**: 18-19px SemiBold (`FlyoutSpeakerTextStyle`, `FlyoutHeaderTextStyle`)
 - **Tray menu (XAML)**: `ControlContentThemeFontSize` / `BodyTextBlockStyle` (system-scaled, no hardcoded sizes)
 - **Tray menu (WinForms)**: Segoe UI Variable Text 9pt
 
@@ -276,8 +282,45 @@ WinUI 3 XAML controls use **Segoe UI** (via `ContentControlThemeFontFamily`) wit
 
 ### Input Control
 
-- **AutoSuggestBox** for message input:
+- **AutoSuggestBox** for message input (MainWindow.xaml):
   - Handles Enter key via `QuerySubmitted` event
   - Avoids TextBox/RichEditBox cursor spacing bug
   - Maintains Windows 11 native look and feel
   - Up/Down arrows for command history navigation
+
+- **ChatInputControl** (Controls/ folder, not yet wired into MainWindow):
+  - TextBox-based input with AcceptsReturn, TextWrapping, spell-check
+  - File attachment via drag-drop and clipboard paste
+  - Model selection dropdown (ObservableCollection<ModelRecord>)
+  - Supported file types: ~70 text extensions, images (.jpg, .png, .gif, .webp), PDFs
+  - Events: MessageSent, FileSendRequested, StreamingStopRequested, RequestHistoryItem
+  - IsStreaming dependency property to disable input during LLM response
+
+### Hotkey Infrastructure
+
+- RegisterHotKey/UnregisterHotKey available via NativeWindow
+- WindowTrayHandler routes WM_HOTKEY to HotKeyEventReceived event
+- Not yet wired to a specific key combination in MainWindow
+
+## CI/CD Workflows
+
+### build.yml
+- Triggers on PRs (all branches) and via `workflow_call` for release pipeline
+- Matrix build: x64 and ARM64 on windows-latest
+- Installs .NET 11 Preview SDK, restores, builds Release configuration
+- When called with `version` input: also publishes, zips, and uploads artifacts
+
+### release.yml
+- Manual trigger (`workflow_dispatch`) with version input
+- Calls build.yml to produce artifacts
+- Creates git tag (`v{version}`), pushes to origin
+- Creates GitHub Release with auto-generated release notes and both zip assets
+- Calls winget-release.yml to submit to WinGet
+
+### winget-release.yml
+- Triggers on GitHub release events or via `workflow_call`
+- Downloads release zips, computes SHA256 hashes
+- Generates three WinGet manifest files (version, locale, installer)
+- Package ID: `sirredbeard.CopilotTaskbarApp`
+- Installer type: zip with nested portable exe
+- Submits to microsoft/winget-pkgs via wingetcreate
