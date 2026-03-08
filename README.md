@@ -1,8 +1,6 @@
 # GitHub Copilot Taskbar GUI
 
-<img width="1002" height="657" alt="Screenshot 2026-02-03 010803" src="https://github.com/user-attachments/assets/01d43924-95e5-489b-a352-7bdc80855e2f" />
-
-> **Work in Progress**: Experimental proof-of-concept for deep OS integration with GitHub Copilot. APIs and features subject to change.
+<img width="1374" height="794" alt="image" src="https://github.com/user-attachments/assets/ae15dfb5-3c29-4d7d-ae21-8143d491d170" />
 
 .NET 11 Preview WinUI 3 desktop application providing system tray access to GitHub Copilot CLI with automatic context awareness. Detects active focus, open applications, file system state, and running services to augment prompts with relevant environment information.
 
