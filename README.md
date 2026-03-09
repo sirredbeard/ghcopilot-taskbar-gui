@@ -1,7 +1,6 @@
 # GitHub Copilot Taskbar GUI
 
 <img width="1002" height="657" alt="Screenshot 2026-02-03 010803" src="https://github.com/user-attachments/assets/dc422da8-ebbb-4721-8db0-442c56f3a988" />
-" />
 
 > This is an experimental proof-of-concept. APIs and features may change.
 
